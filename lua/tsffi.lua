@@ -25,18 +25,9 @@ local function get_ts_cdef(path)
   return header
 end
 
-local Tree = {}
-
---- @class TSParser.ffi : TSParser
---- @field included_ranges fun(self: TSParser, include_bytes: boolean?): integer[]
---- @field set_included_ranges fun(self: TSParser, ranges: (Range6|TSNode)[])
---- @field _set_logger fun(self: TSParser, lex: boolean, parse: boolean, cb: TSLoggerCallback)
---- @field _logger fun(self: TSParser): TSLoggerCallback
-local Parser = {}
-
 --- @param ranges TSRange[]
 --- @param length integer
---- @param include_bytes boolean
+--- @param include_bytes? boolean
 --- @return Range4[]|Range6[]
 local function make_ranges(ranges, length, include_bytes)
   local r = {} --- @type Range4[]|Range6[]
@@ -57,64 +48,219 @@ local function make_ranges(ranges, length, include_bytes)
   return r
 end
 
---- @param tree? TSTree
---- @param source string|integer
---- @param include_bytes? boolean
---- @param timeout_ns? integer
---- @return TSTree?
---- @return Range4[]|Range6[]?
-function Parser:parse(tree, source, include_bytes, timeout_ns)
-  local new_tree --- @type TSTree?
-  if type(source) == 'string' then
-    new_tree = ffi.C.ts_parser_parse_string(self, tree, source, #source)
-  elseif type(source) == 'number' then
-    -- todo
-  else
-    error('expected either string or buffer handle')
+--- @class TSTree.ffi : TSTree
+local TSTree = {}
+
+do -- TSTree
+  function TSTree:root()
+    -- TODO(lewis6991)
   end
 
-  if not new_tree then
-    if not ffi.C.ts_parser_language(self) then
-      error('Language was unset, or has an incompatible ABI.')
+  ---@param start_byte integer
+  ---@param end_byte_old integer
+  ---@param end_byte_new integer
+  ---@param start_row integer
+  ---@param start_col integer
+  ---@param end_row_old integer
+  ---@param end_col_old integer
+  ---@param end_row_new integer
+  ---@param end_col_new integer
+  ---@nodoc
+  function TSTree:edit(
+    start_byte,
+    end_byte_old,
+    end_byte_new,
+    start_row,
+    start_col,
+    end_row_old,
+    end_col_old,
+    end_row_new,
+    end_col_new
+  )
+    vim.validate('start_byte', start_byte, 'number')
+    vim.validate('end_byte_old', end_byte_old, 'number')
+    vim.validate('end_byte_new', end_byte_new, 'number')
+    vim.validate('start_row', start_row, 'number')
+    vim.validate('start_col', start_col, 'number')
+    vim.validate('end_row_old', end_row_old, 'number')
+    vim.validate('end_col_old', end_col_old, 'number')
+    vim.validate('end_row_new', end_row_new, 'number')
+    vim.validate('end_col_new', end_col_new, 'number')
+
+    local start_point = ffi.new('TSPoint', { start_row, start_col })
+    local old_end_point = ffi.new('TSPoint', { end_row_old, end_col_old })
+    local new_end_point = ffi.new('TSPoint', { end_row_new, end_col_new })
+
+    local edit = ffi.new('TSInputEdit', {
+      start_byte,
+      end_byte_old,
+      end_byte_new,
+      start_point,
+      old_end_point,
+      new_end_point,
+    })
+
+    ffi.C.ts_tree_edit(self, edit)
+  end
+
+  ---@param include_bytes boolean?
+  ---@return Range4[]|Range6[]
+  function TSTree:included_ranges(include_bytes)
+    local len = ffi.new('int[1]')
+    local ranges = ffi.gc(ffi.C.ts_tree_included_ranges(self, len), ffi.C.free)
+    return make_ranges(ranges, len[0], include_bytes)
+  end
+
+  function TSTree:copy()
+    return ffi.gc(ffi.C.ts_tree_copy(self), ffi.C.ts_tree_delete)
+  end
+
+  function TSTree:__tostring()
+    -- TODO(lewis6991)
+  end
+end
+
+--- @class TSQueryCursor.ffi : TSQueryCursor
+local TSQueryCursor = {}
+
+do -- TSQueryCursor
+  function TSQueryCursor:remove_match()
+    -- TODO(lewis6991)
+  end
+
+  function TSQueryCursor:next_capture()
+    -- TODO(lewis6991)
+  end
+
+  function TSQueryCursor:next_match()
+    -- TODO(lewis6991)
+  end
+end
+
+--- @class TSParser.ffi : TSParser
+local TSParser = {}
+
+do -- TSParser
+  --- @param tree? TSTree
+  --- @param source string|integer
+  --- @param include_bytes? boolean
+  --- @param _timeout_ns? integer
+  --- @return TSTree?
+  --- @return Range4[]|Range6[]?
+  function TSParser:parse(tree, source, include_bytes, _timeout_ns)
+    local new_tree --- @type TSTree?
+    if type(source) == 'string' then
+      new_tree = ffi.C.ts_parser_parse_string(self, tree, source, #source)
+    elseif type(source) == 'number' then
+      -- todo
+    else
+      error('expected either string or buffer handle')
     end
-    return
+
+    if not new_tree then
+      if not ffi.C.ts_parser_language(self) then
+        error('Language was unset, or has an incompatible ABI.')
+      end
+      return
+    end
+
+    ffi.gc(new_tree, ffi.C.ts_tree_delete)
+
+    local n_ranges = ffi.new('int[1]')
+
+    local changed = tree and ffi.C.ts_tree_get_changed_ranges(tree, new_tree, n_ranges)
+      or ffi.C.ts_tree_included_ranges(new_tree, n_ranges)
+
+    ffi.gc(changed, ffi.C.free)
+
+    return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
   end
 
-  local n_ranges = ffi.new('int[1]')
+  function TSParser:reset()
+    -- TODO(lewis6991)
+  end
 
-  -- local changed = tree and ffi.C.ts_tree_get_changed_ranges(tree, new_tree, n_ranges)
-  --   or ffi.C.ts_tree_included_ranges(new_tree, n_ranges)
+  function TSParser:set_included_ranges()
+    -- TODO(lewis6991)
+  end
 
-  local changed = ffi.C.ts_tree_included_ranges(new_tree, n_ranges)
+  function TSParser:included_ranges()
+    -- TODO(lewis6991)
+  end
 
-  return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
+  function TSParser:_set_logger()
+    -- TODO(lewis6991)
+  end
+
+  function TSParser:_logger()
+    -- TODO(lewis6991)
+  end
+
+  function TSParser:__tostring()
+    -- TODO(lewis6991)
+  end
 end
 
 local M = {}
 
+--- @type table<string, TSLanguage>
+M.langs = {}
+
+--- @param lang string
+--- @return TSLanguage
+local function lang_check(lang)
+  vim.validate('lang', lang, 'string')
+  local l = M.langs[lang]
+  if not l then
+    error(('no such language: %s'):format(lang), 2)
+  end
+  return l
+end
+
 --- @param ts_api_path string
 function M.init(ts_api_path)
   ffi.cdef(get_ts_cdef(ts_api_path))
-  ffi.metatype('TSParser', { __index = Parser })
-  ffi.metatype('TSTree', { __index = Tree })
+  ffi.cdef([[void *free(void *);]])
+  ffi.metatype('TSParser', { __index = TSParser })
+  ffi.metatype('TSTree', { __index = TSTree })
+  ffi.metatype('TSQueryCursor', { __index = TSQueryCursor })
 end
 
 --- @param lang string
---- @return TSParser.ffi
+--- @return TSParser
 function M._create_ts_parser(lang)
   local parser = ffi.gc(ffi.C.ts_parser_new(), ffi.C.ts_parser_delete)
-  local language = M.langs[lang]
-  if not language then
-    error(('Language "%s" not found'):format(lang))
-  end
-
-  ffi.C.ts_parser_set_language(parser, language)
-
+  ffi.C.ts_parser_set_language(parser, lang_check(lang))
   return parser
 end
 
---- @type table<string, TSLanguage>
-M.langs = {}
+--- @param node TSNode
+--- @param query TSQuery
+--- @param start integer?
+--- @param stop integer?
+--- @param opts? { max_start_depth?: integer, match_limit?: integer}
+--- @return TSQueryCursor
+function M._create_ts_querycursor(node, query, start, stop, opts)
+  local cursor = ffi.gc(ffi.C.ts_query_cursor_new(), ffi.C.ts_query_cursor_delete)
+
+  ffi.C.ts_query_cursor_exec(cursor, query, node)
+
+  if start and stop then
+    local s = ffi.new('TSPoint', { start, 0 })
+    local e = ffi.new('TSPoint', { stop, 0 })
+    ffi.C.ts_qeury_cursor_set_point_range(cursor, s, e)
+  end
+
+  if opts then
+    if opts.max_start_depth then
+      ffi.C.ts_query_cursor_set_new_start_depth(cursor, opts.max_start_depth)
+    elseif opts.match_limit then
+      ffi.C.ts_query_cursor_set_match_limit(cursor, opts.match_limit)
+    end
+  end
+
+  return cursor
+end
 
 --- @param path string
 --- @param lang string
