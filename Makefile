@@ -1,3 +1,5 @@
+.PHONY: default
+default: test
 
 TS = .deps/tree-sitter
 TS_API = $(TS)/lib/include/tree_sitter/api.h
@@ -20,5 +22,6 @@ $(TS_C):
 $(TS_C_SO): $(TS_C)
 	make -C $(TS_C)
 
+.PHONY: test
 test: $(TS_C_SO) $(TS)
 	nvim -l test.lua $(TS_API) $(TS_C_SO) c
