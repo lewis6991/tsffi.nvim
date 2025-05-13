@@ -8,7 +8,4 @@ vim.api.nvim_create_autocmd('FileType', {
 
 vim.opt.runtimepath:append('.')
 
-local tsffi = require('tsffi')
-
-tsffi.init('.deps/tree-sitter/lib/include/tree_sitter/api.h')
-tsffi.setup()
+require('tsffi').setup()

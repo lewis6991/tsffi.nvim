@@ -6,22 +6,15 @@ Why? The regular Lua-C API can be quite slow due to contexts switches. LuaJIT's 
 
 ## Usage
 
-```bash
-make .deps/tree-sitter
-```
-
 ```lua
-local tsffi = require('tsffi')
-tsffi.init('.deps/tree-sitter/lib/include/tree_sitter/api.h')
-tsffi.setup()
+require('tsffi').setup()
 ```
 
 ## Test
 
 ```bash
-make .deps/tree-sitter
 nvim -u nvimrc.lua <C file>
-# e.g. nvim -u nvimrc.lua .deps/tree-sitter/lib/include/tree_sitter/api.h
+# e.g. nvim -u nvimrc.lua vendor/api.h
 ```
 
 ## Status

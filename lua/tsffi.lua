@@ -1325,7 +1325,31 @@ end
 
 local otype = type
 
+--- @return string
+local function get_current_module_path()
+  -- debug.getinfo(1, "S") gets information about the current function (level 1)
+  -- "S" specifies that we want the 'source' field.
+  local info = debug.getinfo(1, 'S')
+
+  -- The 'source' field contains the path of the file.
+  -- It might be prefixed with '@' if it's a file path,
+  -- or it could be different if the code was loaded from a string.
+  local path = info.source
+
+  -- Remove the '@' prefix if it exists
+  if path:sub(1, 1) == '@' then
+    --- @type string
+    path = path:sub(2)
+  end
+
+  return vim.fs.abspath(path)
+end
+
 function M.setup()
+  local modpath = get_current_module_path()
+  local api_path = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(modpath)), 'vendor', 'api.h')
+  M.init(api_path)
+
   function _G.type(obj)
     local r = otype(obj)
     if r == 'cdata' then
