@@ -9,6 +9,13 @@ function C.free(ptr) end
 
 function C.malloc(size) end
 
+--- @param parser TSParser.cdata
+--- @param old_tree TSTree.cdata?
+--- @param bufnr integer
+--- @param timeout_ns integer
+--- @return TSTree.cdata?
+function C.nvim_ts_parser_parse_buf(parser, old_tree, bufnr, timeout_ns) end
+
 do --- Section - Types
   ---@class TSStateId: integer
   ---@class TSSymbol: integer

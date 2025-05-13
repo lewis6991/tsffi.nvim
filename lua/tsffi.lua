@@ -3,6 +3,8 @@ local C = ffi.C --- @type ffilib.tree-sitter.C
 
 local MAXLNUM = 2 ^ 31 - 1
 
+local has_nvim_ts_parser_parse_buf = false
+
 local TS_LANGUAGE_VERSION = vim._ts_get_language_version()
 local TS_MIN_COMPATIBLE_LANG_VERSION = vim._ts_get_minimum_language_version()
 
@@ -17,10 +19,6 @@ local function get_ts_cdef(path)
   header_f:close()
   return header
 end
-
---- @class TSNode.ffi
---- @field _node TSNode.cdata
-local TSNode = {}
 
 --- @param ranges TSRange.cdata[]
 --- @param length integer
@@ -45,530 +43,9 @@ local function make_ranges(ranges, length, include_bytes)
   return r
 end
 
---- @class TSTree.ffi : TSTree
-local TSTree = {}
-
-do -- TSTree
-  --- @return TSNode.ffi
-  function TSTree:root()
-    return assert(TSNode.new(C.ts_tree_root_node(self)))
-  end
-
-  --- @param start_byte integer
-  --- @param end_byte_old integer
-  --- @param end_byte_new integer
-  --- @param start_row integer
-  --- @param start_col integer
-  --- @param end_row_old integer
-  --- @param end_col_old integer
-  --- @param end_row_new integer
-  --- @param end_col_new integer
-  function TSTree:edit(
-    start_byte,
-    end_byte_old,
-    end_byte_new,
-    start_row,
-    start_col,
-    end_row_old,
-    end_col_old,
-    end_row_new,
-    end_col_new
-  )
-    vim.validate('start_byte', start_byte, 'number')
-    vim.validate('end_byte_old', end_byte_old, 'number')
-    vim.validate('end_byte_new', end_byte_new, 'number')
-    vim.validate('start_row', start_row, 'number')
-    vim.validate('start_col', start_col, 'number')
-    vim.validate('end_row_old', end_row_old, 'number')
-    vim.validate('end_col_old', end_col_old, 'number')
-    vim.validate('end_row_new', end_row_new, 'number')
-    vim.validate('end_col_new', end_col_new, 'number')
-
-    local input = ffi.new(
-      'TSInputEdit',
-      start_byte,
-      end_byte_old,
-      end_byte_new,
-      ffi.new('TSPoint', start_row, start_col),
-      ffi.new('TSPoint', end_row_old, end_col_old),
-      ffi.new('TSPoint', end_row_new, end_col_new)
-    ) --[[@as TSInputEdit.cdata]]
-
-    C.ts_tree_edit(self, input)
-  end
-
-  --- @param include_bytes boolean?
-  --- @return Range4[]|Range6[]
-  function TSTree:included_ranges(include_bytes)
-    local len = ffi.new('uint32_t[1]')
-    local ranges = C.ts_tree_included_ranges(self, len)
-    ffi.gc(ranges, C.free)
-    return make_ranges(ranges, len[0], include_bytes)
-  end
-
-  --- @return TSTree
-  function TSTree:copy()
-    local copy = C.ts_tree_copy(self)
-    ffi.gc(copy, C.ts_tree_delete)
-    return copy
-  end
-end
-
---- @class TSParser.ffi : TSParser
-local TSParser = {}
-
-do -- TSParser
-  -- static bool on_parser_progress(TSParseState *state)
-  -- {
-  --   TSLuaParserCallbackPayload *payload = state->payload;
-  --   uint64_t parse_time = os_hrtime() - payload->parse_start_time;
-  --   return parse_time >= payload->timeout_threshold_ns;
-  -- }
-
-  -- static void logger_cb(void *payload, TSLogType logtype, const char *s)
-  -- {
-  --   TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)payload;
-  --   if ((!opts->lex && logtype == TSLogTypeLex)
-  --       || (!opts->parse && logtype == TSLogTypeParse)) {
-  --     return;
-  --   }
-  --
-  --   lua_State *lstate = opts->lstate;
-  --
-  --   lua_rawgeti(lstate, LUA_REGISTRYINDEX, opts->cb);
-  --   lua_pushstring(lstate, logtype == TSLogTypeParse ? "parse" : "lex");
-  --   lua_pushstring(lstate, s);
-  --   if (lua_pcall(lstate, 2, 0, 0)) {
-  --     luaL_error(lstate, "Error executing treesitter logger callback");
-  --   }
-  -- }
-  --
-  -- static int parser_set_logger(lua_State *L)
-  -- {
-  --   luaL_argcheck(L, lua_isboolean(L, 2), 2, "boolean expected");
-  --   luaL_argcheck(L, lua_isboolean(L, 3), 3, "boolean expected");
-  --   luaL_argcheck(L, lua_isfunction(L, 4), 4, "function expected");
-  --
-  --   TSLuaLoggerOpts *opts = xmalloc(sizeof(TSLuaLoggerOpts));
-  --   lua_pushvalue(L, 4);
-  --   LuaRef ref = luaL_ref(L, LUA_REGISTRYINDEX);
-  --
-  --   *opts = (TSLuaLoggerOpts){
-  --     .lex = lua_toboolean(L, 2),
-  --     .parse = lua_toboolean(L, 3),
-  --     .cb = ref,
-  --     .lstate = L
-  --   };
-  --
-  --   TSLogger logger = {
-  --     .payload = (void *)opts,
-  --     .log = logger_cb
-  --   };
-  --
-  --   ts_parser_set_logger(p, logger);
-  --   return 0;
-  -- }
-  --
-  -- static int parser_get_logger(lua_State *L)
-  -- {
-  --   TSLogger logger = ts_parser_logger(p);
-  --   if (logger.log) {
-  --     TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)logger.payload;
-  --     lua_rawgeti(L, LUA_REGISTRYINDEX, opts->cb);
-  --   } else {
-  --     lua_pushnil(L);
-  --   }
-  --
-  --   return 1;
-  -- }
-
-  --- @param tree? TSTree.ffi
-  --- @param source string|integer
-  --- @param include_bytes? boolean
-  --- @param _timeout_ns? integer
-  --- @return TSTree.ffi?
-  --- @return Range4[]|Range6[]?
-  function TSParser:parse(tree, source, include_bytes, _timeout_ns)
-    local new_tree = nil
-    if type(source) == 'string' then
-      new_tree = C.ts_parser_parse_string(self, tree, source, #source)
-    elseif type(source) == 'number' then
-      local textl = vim.api.nvim_buf_get_text(source, 0, 0, -1, -1, {})
-      local text = table.concat(textl, '\n')
-      new_tree = C.ts_parser_parse_string(self, tree, text, #text)
-      -- input = (TSInput){ (void *)buf, input_cb, TSInputEncodingUTF8, NULL };
-      -- if (!lua_isnil(L, 5)) {
-      --   uint64_t timeout_ns = (uint64_t)lua_tointeger(L, 5);
-      --   TSLuaParserCallbackPayload payload =
-      --     (TSLuaParserCallbackPayload){ .parse_start_time = os_hrtime(),
-      --                                   .timeout_threshold_ns = timeout_ns };
-      --   TSParseOptions parse_options = { .payload = &payload,
-      --                                    .progress_callback = on_parser_progress };
-      --   new_tree = ts_parser_parse_with_options(p, old_tree, input, parse_options);
-      -- } else {
-      --   // Tree-sitter retains parse options after use, so we must explicitly reset them here.
-      --   new_tree = ts_parser_parse_with_options(p, old_tree, input, (TSParseOptions) { 0 });
-      -- }
-    else
-      error('expected either string or buffer handle')
-    end
-
-    if new_tree then
-      ffi.gc(new_tree, C.ts_tree_delete)
-    else
-      if not C.ts_parser_language(self) then
-        error('Language was unset, or has an incompatible ABI.')
-      end
-      return
-    end
-
-    local n_ranges = ffi.new('uint32_t[1]')
-
-    local changed = tree and C.ts_tree_get_changed_ranges(tree, new_tree, n_ranges)
-      or C.ts_tree_included_ranges(new_tree, n_ranges)
-
-    ffi.gc(changed, C.free)
-
-    return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
-  end
-
-  function TSParser:reset()
-    C.ts_parser_reset(self)
-  end
-
-  local function range_err()
-    error('Ranges can only be made from 6 element long tables or nodes.', 2)
-  end
-
-  --- @param range Range6|TSNode.ffi
-  --- @param tsrange TSRange.cdata
-  local function range_from_lua(range, tsrange)
-    if type(range) == 'table' then
-      if #range ~= 6 then
-        range_err()
-      end
-      tsrange.start_point.row = range[1]
-      tsrange.start_point.column = range[2]
-      tsrange.start_byte = range[3]
-      tsrange.end_point.row = range[4]
-      tsrange.end_point.column = range[5]
-      tsrange.end_byte = range[6]
-      return
-    end
-    --- @cast range TSNode.ffi
-    if range and ffi.istype('TSNode', range) then
-      tsrange.start_point = C.ts_node_start_point(range._node)
-      tsrange.end_point = C.ts_node_end_point(range._node)
-      tsrange.start_byte = C.ts_node_start_byte(range._node)
-      tsrange.end_byte = C.ts_node_end_byte(range._node)
-    else
-      range_err()
-    end
-  end
-
-  --- @param ranges (Range6|TSNode.ffi)[])
-  function TSParser:set_included_ranges(ranges)
-    vim.validate('ranges', ranges, 'table')
-    local tbl_len = #ranges
-    if tbl_len == 0 then
-      return
-    end
-
-    --- @type TSRange.cdata[]
-    local tsranges = ffi.new('TSRange[?]', tbl_len)
-
-    for index = 1, tbl_len do
-      range_from_lua(ranges[index], tsranges[index - 1])
-    end
-
-    C.ts_parser_set_included_ranges(self, tsranges, tbl_len)
-  end
-
-  --- @param include_bytes? boolean
-  --- @return Range4[]|Range6[]
-  function TSParser:included_ranges(include_bytes)
-    local len = ffi.new('uint32_t[1]')
-    local ranges = C.ts_parser_included_ranges(self, len)
-    return make_ranges(ranges, len[0], include_bytes)
-  end
-
-  --- @param _lex boolean
-  --- @param _parse boolean
-  --- @param _cb TSLoggerCallback
-  function TSParser:_set_logger(_lex, _parse, _cb)
-    -- TODO(lewis6991)
-  end
-
-  function TSParser:_logger()
-    -- TODO(lewis6991)
-  end
-end
-
-do -- lang and wasm
-  -- typedef struct {
-  --   uint64_t parse_start_time;
-  --   uint64_t timeout_threshold_ns;
-  -- } TSLuaParserCallbackPayload;
-  --
-  -- static PMap(cstr_t) langs = MAP_INIT;
-  --
-  -- #ifdef HAVE_WASMTIME
-  -- static wasm_engine_t *wasmengine;
-  -- static TSWasmStore *ts_wasmstore;
-  -- #endif
-  --
-  -- // TSLanguage
-  --
-  -- #ifdef HAVE_WASMTIME
-  --
-  -- static const char *wasmerr_to_str(TSWasmErrorKind werr)
-  -- {
-  --   switch (werr) {
-  --   case TSWasmErrorKindParse:
-  --     return "PARSE";
-  --   case TSWasmErrorKindCompile:
-  --     return "COMPILE";
-  --   case TSWasmErrorKindInstantiate:
-  --     return "INSTANTIATE";
-  --   case TSWasmErrorKindAllocate:
-  --     return "ALLOCATE";
-  --   default:
-  --     return "UNKNOWN";
-  --   }
-  -- }
-  -- #endif
-  --
-  -- #ifdef HAVE_WASMTIME
-  -- static int tslua_add_language_from_wasm(lua_State *L)
-  -- {
-  --   return add_language(L, true);
-  -- }
-  -- #endif
-  --
-  -- static const TSLanguage *load_language_from_wasm(lua_State *L, const char *path,
-  --                                                  const char *lang_name)
-  -- {
-  -- #ifndef HAVE_WASMTIME
-  --   luaL_error(L, "Not supported");
-  --   return NULL;
-  -- #else
-  --   if (wasmengine == NULL) {
-  --     wasmengine = wasm_engine_new();
-  --   }
-  --   assert(wasmengine != NULL);
-  --
-  --   TSWasmError werr = { 0 };
-  --   if (ts_wasmstore == NULL) {
-  --     ts_wasmstore = ts_wasm_store_new(wasmengine, &werr);
-  --   }
-  --
-  --   if (werr.kind > 0) {
-  --     luaL_error(L, "Error creating wasm store: (%s) %s", wasmerr_to_str(werr.kind), werr.message);
-  --   }
-  --
-  --   size_t file_size = 0;
-  --   char *data = read_file(path, &file_size);
-  --
-  --   if (data == NULL) {
-  --     luaL_error(L, "Unable to read file", path);
-  --   }
-  --
-  --   const TSLanguage *lang = ts_wasm_store_load_language(ts_wasmstore, lang_name, data,
-  --                                                        (uint32_t)file_size, &werr);
-  --
-  --   xfree(data);
-  --
-  --   if (werr.kind > 0) {
-  --     luaL_error(L, "Failed to load WASM parser %s: (%s) %s", path, wasmerr_to_str(werr.kind),
-  --                werr.message);
-  --   }
-  --
-  --   if (lang == NULL) {
-  --     luaL_error(L, "Failed to load parser %s: internal error", path);
-  --   }
-  --
-  --   return lang;
-  -- #endif
-  -- }
-  --
-  -- static int add_language(lua_State *L, bool is_wasm)
-  -- {
-  --   const char *path = luaL_checkstring(L, 1);
-  --   const char *lang_name = luaL_checkstring(L, 2);
-  --   const char *symbol_name = lang_name;
-  --
-  --   if (!is_wasm && lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
-  --     symbol_name = luaL_checkstring(L, 3);
-  --   }
-  --
-  --   if (map_has(cstr_t, &langs, lang_name)) {
-  --     lua_pushboolean(L, true);
-  --     return 1;
-  --   }
-  --
-  --   const TSLanguage *lang = is_wasm
-  --                            ? load_language_from_wasm(L, path, lang_name)
-  --                            : load_language_from_object(L, path, lang_name, symbol_name);
-  --
-  --   uint32_t lang_version = ts_language_abi_version(lang);
-  --   if (lang_version < TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION
-  --       || lang_version > TREE_SITTER_LANGUAGE_VERSION) {
-  --     return luaL_error(L,
-  --                       "ABI version mismatch for %s: supported between %d and %d, found %d",
-  --                       path,
-  --                       TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION,
-  --                       TREE_SITTER_LANGUAGE_VERSION, lang_version);
-  --   }
-  --
-  --   pmap_put(cstr_t)(&langs, xstrdup(lang_name), (TSLanguage *)lang);
-  --
-  --   lua_pushboolean(L, true);
-  --   return 1;
-  -- }
-  --
-  -- static int tslua_inspect_lang(lua_State *L)
-  -- {
-  --   TSLanguage *lang = lang_check(L, 1);
-  --
-  --   lua_createtable(L, 0, 2);  // [retval]
-  --
-  --   {  // Symbols
-  --     uint32_t nsymbols = ts_language_symbol_count(lang);
-  --     assert(nsymbols < INT_MAX);
-  --
-  --     lua_createtable(L, (int)(nsymbols - 1), 1);  // [retval, symbols]
-  --     for (uint32_t i = 0; i < nsymbols; i++) {
-  --       TSSymbolType t = ts_language_symbol_type(lang, (TSSymbol)i);
-  --       if (t == TSSymbolTypeAuxiliary) {
-  --         // not used by the API
-  --         continue;
-  --       }
-  --       const char *name = ts_language_symbol_name(lang, (TSSymbol)i);
-  --       bool named = t != TSSymbolTypeAnonymous;
-  --       lua_pushboolean(L, named);  // [retval, symbols, is_named]
-  --       if (!named) {
-  --         char buf[256];
-  --         snprintf(buf, sizeof(buf), "\"%s\"", name);
-  --         lua_setfield(L, -2, buf);  // [retval, symbols]
-  --       } else {
-  --         lua_setfield(L, -2, name);  // [retval, symbols]
-  --       }
-  --     }
-  --
-  --     lua_setfield(L, -2, "symbols");  // [retval]
-  --   }
-  --
-  --   {  // Fields
-  --     uint32_t nfields = ts_language_field_count(lang);
-  --     lua_createtable(L, (int)nfields, 1);  // [retval, fields]
-  --     // Field IDs go from 1 to nfields inclusive (extra index 0 maps to NULL)
-  --     for (uint32_t i = 1; i <= nfields; i++) {
-  --       lua_pushstring(L, ts_language_field_name_for_id(lang, (TSFieldId)i));
-  --       lua_rawseti(L, -2, (int)i);  // [retval, fields]
-  --     }
-  --
-  --     lua_setfield(L, -2, "fields");  // [retval]
-  --   }
-  --
-  --   lua_pushboolean(L, ts_language_is_wasm(lang));
-  --   lua_setfield(L, -2, "_wasm");
-  --
-  --   lua_pushinteger(L, ts_language_abi_version(lang));  // [retval, version]
-  --   lua_setfield(L, -2, "abi_version");
-  --
-  --   {  // Metadata
-  --     const TSLanguageMetadata *meta = ts_language_metadata(lang);
-  --
-  --     if (meta != NULL) {
-  --       lua_createtable(L, 0, 3);
-  --
-  --       lua_pushinteger(L, meta->major_version);
-  --       lua_setfield(L, -2, "major_version");
-  --       lua_pushinteger(L, meta->minor_version);
-  --       lua_setfield(L, -2, "minor_version");
-  --       lua_pushinteger(L, meta->patch_version);
-  --       lua_setfield(L, -2, "patch_version");
-  --
-  --       lua_setfield(L, -2, "metadata");
-  --     }
-  --   }
-  --
-  --   lua_pushinteger(L, ts_language_state_count(lang));
-  --   lua_setfield(L, -2, "state_count");
-  --
-  --   {  // Supertypes
-  --     uint32_t nsupertypes;
-  --     const TSSymbol *supertypes = ts_language_supertypes(lang, &nsupertypes);
-  --
-  --     lua_createtable(L, 0, (int)nsupertypes);  // [retval, supertypes]
-  --     for (uint32_t i = 0; i < nsupertypes; i++) {
-  --       const TSSymbol supertype = *(supertypes + i);
-  --
-  --       uint32_t nsubtypes;
-  --       const TSSymbol *subtypes = ts_language_subtypes(lang, supertype, &nsubtypes);
-  --
-  --       lua_createtable(L, (int)nsubtypes, 0);
-  --       for (uint32_t j = 1; j <= nsubtypes; j++) {
-  --         lua_pushstring(L, ts_language_symbol_name(lang, *(subtypes + j)));
-  --         lua_rawseti(L, -2, (int)j);
-  --       }
-  --
-  --       lua_setfield(L, -2, ts_language_symbol_name(lang, supertype));
-  --     }
-  --
-  --     lua_setfield(L, -2, "supertypes");  // [retval]
-  --   }
-  --
-  --   return 1;
-  -- }
-  --
-  -- // TSParser
-  --
-  -- static void logger_gc(TSLogger logger)
-  -- {
-  --   if (!logger.log) {
-  --     return;
-  --   }
-  --
-  --   TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)logger.payload;
-  --   luaL_unref(opts->lstate, LUA_REGISTRYINDEX, opts->cb);
-  --   xfree(opts);
-  -- }
-  --
-  -- static const char *input_cb(void *payload, uint32_t byte_index, TSPoint position,
-  --                             uint32_t *bytes_read)
-  -- {
-  --   buf_T *bp = payload;
-  -- #define BUFSIZE 256
-  --   static char buf[BUFSIZE];
-  --
-  --   if ((linenr_T)position.row >= bp->b_ml.ml_line_count) {
-  --     *bytes_read = 0;
-  --     return "";
-  --   }
-  --   char *line = ml_get_buf(bp, (linenr_T)position.row + 1);
-  --   size_t len = (size_t)ml_get_buf_len(bp, (linenr_T)position.row + 1);
-  --   if (position.column > len) {
-  --     *bytes_read = 0;
-  --     return "";
-  --   }
-  --   size_t tocopy = MIN(len - position.column, BUFSIZE);
-  --
-  --   memcpy(buf, line + position.column, tocopy);
-  --   // Translate embedded \n to NUL
-  --   memchrsub(buf, '\n', NUL, tocopy);
-  --   *bytes_read = (uint32_t)tocopy;
-  --   if (tocopy < BUFSIZE) {
-  --     // now add the final \n. If it didn't fit, input_cb will be called again
-  --     // on the same line with advanced column.
-  --     buf[tocopy] = '\n';
-  --     (*bytes_read)++;
-  --   }
-  --   return buf;
-  -- #undef BUFSIZE
-  -- }
-  --
-end
+--- @class TSNode.ffi : TSNode
+--- @field _node TSNode.cdata
+local TSNode = {}
 
 do --- TSNode
   TSNode.__index = TSNode
@@ -872,6 +349,254 @@ do --- TSNode
   end
 end
 
+--- @class TSTree.ffi : TSTree
+local TSTree = {}
+
+do --- TSTree
+  --- @return TSNode.ffi
+  function TSTree:root()
+    return assert(TSNode.new(C.ts_tree_root_node(self)))
+  end
+
+  --- @param start_byte integer
+  --- @param end_byte_old integer
+  --- @param end_byte_new integer
+  --- @param start_row integer
+  --- @param start_col integer
+  --- @param end_row_old integer
+  --- @param end_col_old integer
+  --- @param end_row_new integer
+  --- @param end_col_new integer
+  function TSTree:edit(
+    start_byte,
+    end_byte_old,
+    end_byte_new,
+    start_row,
+    start_col,
+    end_row_old,
+    end_col_old,
+    end_row_new,
+    end_col_new
+  )
+    vim.validate('start_byte', start_byte, 'number')
+    vim.validate('end_byte_old', end_byte_old, 'number')
+    vim.validate('end_byte_new', end_byte_new, 'number')
+    vim.validate('start_row', start_row, 'number')
+    vim.validate('start_col', start_col, 'number')
+    vim.validate('end_row_old', end_row_old, 'number')
+    vim.validate('end_col_old', end_col_old, 'number')
+    vim.validate('end_row_new', end_row_new, 'number')
+    vim.validate('end_col_new', end_col_new, 'number')
+
+    local input = ffi.new(
+      'TSInputEdit',
+      start_byte,
+      end_byte_old,
+      end_byte_new,
+      ffi.new('TSPoint', start_row, start_col),
+      ffi.new('TSPoint', end_row_old, end_col_old),
+      ffi.new('TSPoint', end_row_new, end_col_new)
+    ) --[[@as TSInputEdit.cdata]]
+
+    C.ts_tree_edit(self, input)
+  end
+
+  --- @param include_bytes boolean?
+  --- @return Range4[]|Range6[]
+  function TSTree:included_ranges(include_bytes)
+    local len = ffi.new('uint32_t[1]')
+    local ranges = C.ts_tree_included_ranges(self, len)
+    ffi.gc(ranges, C.free)
+    return make_ranges(ranges, len[0], include_bytes)
+  end
+
+  --- @return TSTree
+  function TSTree:copy()
+    local copy = C.ts_tree_copy(self)
+    ffi.gc(copy, C.ts_tree_delete)
+    return copy
+  end
+end
+
+--- @class TSParser.ffi : TSParser
+local TSParser = {}
+
+do --- TSParser
+  -- static void logger_cb(void *payload, TSLogType logtype, const char *s)
+  -- {
+  --   TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)payload;
+  --   if ((!opts->lex && logtype == TSLogTypeLex)
+  --       || (!opts->parse && logtype == TSLogTypeParse)) {
+  --     return;
+  --   }
+  --
+  --   lua_State *lstate = opts->lstate;
+  --
+  --   lua_rawgeti(lstate, LUA_REGISTRYINDEX, opts->cb);
+  --   lua_pushstring(lstate, logtype == TSLogTypeParse ? "parse" : "lex");
+  --   lua_pushstring(lstate, s);
+  --   if (lua_pcall(lstate, 2, 0, 0)) {
+  --     luaL_error(lstate, "Error executing treesitter logger callback");
+  --   }
+  -- }
+  --
+  -- static int parser_set_logger(lua_State *L)
+  -- {
+  --   luaL_argcheck(L, lua_isboolean(L, 2), 2, "boolean expected");
+  --   luaL_argcheck(L, lua_isboolean(L, 3), 3, "boolean expected");
+  --   luaL_argcheck(L, lua_isfunction(L, 4), 4, "function expected");
+  --
+  --   TSLuaLoggerOpts *opts = xmalloc(sizeof(TSLuaLoggerOpts));
+  --   lua_pushvalue(L, 4);
+  --   LuaRef ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  --
+  --   *opts = (TSLuaLoggerOpts){
+  --     .lex = lua_toboolean(L, 2),
+  --     .parse = lua_toboolean(L, 3),
+  --     .cb = ref,
+  --     .lstate = L
+  --   };
+  --
+  --   TSLogger logger = {
+  --     .payload = (void *)opts,
+  --     .log = logger_cb
+  --   };
+  --
+  --   ts_parser_set_logger(p, logger);
+  --   return 0;
+  -- }
+  --
+  -- static int parser_get_logger(lua_State *L)
+  -- {
+  --   TSLogger logger = ts_parser_logger(p);
+  --   if (logger.log) {
+  --     TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)logger.payload;
+  --     lua_rawgeti(L, LUA_REGISTRYINDEX, opts->cb);
+  --   } else {
+  --     lua_pushnil(L);
+  --   }
+  --
+  --   return 1;
+  -- }
+
+  --- @param tree? TSTree.ffi
+  --- @param source string|integer
+  --- @param include_bytes? boolean
+  --- @param timeout_ns? integer
+  --- @return TSTree.ffi?
+  --- @return Range4[]|Range6[]?
+  function TSParser:parse(tree, source, include_bytes, timeout_ns)
+    local new_tree = nil
+    if type(source) == 'string' then
+      new_tree = C.ts_parser_parse_string(self, tree, source, #source)
+    elseif type(source) == 'number' then
+      assert(vim.api.nvim_buf_is_valid(source), 'Invalid buffer handle')
+      if has_nvim_ts_parser_parse_buf then
+        new_tree = C.nvim_ts_parser_parse_buf(self, tree, source, timeout_ns or 0)
+        if new_tree == nil then
+          -- Make it actually nil
+          new_tree = nil
+        end
+      else
+        local textl = vim.api.nvim_buf_get_text(source, 0, 0, -1, -1, {})
+        local text = table.concat(textl, '\n')
+        new_tree = C.ts_parser_parse_string(self, tree, text, #text)
+      end
+    else
+      error('expected either string or buffer handle')
+    end
+
+    if new_tree then
+      ffi.gc(new_tree, C.ts_tree_delete)
+    else
+      if not C.ts_parser_language(self) then
+        error('Language was unset, or has an incompatible ABI.')
+      end
+      return
+    end
+
+    local n_ranges = ffi.new('uint32_t[1]')
+
+    local changed = tree and C.ts_tree_get_changed_ranges(tree, new_tree, n_ranges)
+      or C.ts_tree_included_ranges(new_tree, n_ranges)
+
+    ffi.gc(changed, C.free)
+
+    return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
+  end
+
+  function TSParser:reset()
+    C.ts_parser_reset(self)
+  end
+
+  local function range_err()
+    error('Ranges can only be made from 6 element long tables or nodes.', 2)
+  end
+
+  --- @param range Range6|TSNode.ffi
+  --- @param tsrange TSRange.cdata
+  local function range_from_lua(range, tsrange)
+    if type(range) == 'table' then
+      if #range ~= 6 then
+        range_err()
+      end
+      tsrange.start_point.row = range[1]
+      tsrange.start_point.column = range[2]
+      tsrange.start_byte = range[3]
+      tsrange.end_point.row = range[4]
+      tsrange.end_point.column = range[5]
+      tsrange.end_byte = range[6]
+      return
+    end
+    --- @cast range TSNode.ffi
+    if range and ffi.istype('TSNode', range) then
+      tsrange.start_point = C.ts_node_start_point(range._node)
+      tsrange.end_point = C.ts_node_end_point(range._node)
+      tsrange.start_byte = C.ts_node_start_byte(range._node)
+      tsrange.end_byte = C.ts_node_end_byte(range._node)
+    else
+      range_err()
+    end
+  end
+
+  --- @param ranges (Range6|TSNode.ffi)[])
+  function TSParser:set_included_ranges(ranges)
+    vim.validate('ranges', ranges, 'table')
+    local tbl_len = #ranges
+    if tbl_len == 0 then
+      return
+    end
+
+    --- @type TSRange.cdata[]
+    local tsranges = ffi.new('TSRange[?]', tbl_len)
+
+    for index = 1, tbl_len do
+      range_from_lua(ranges[index], tsranges[index - 1])
+    end
+
+    C.ts_parser_set_included_ranges(self, tsranges, tbl_len)
+  end
+
+  --- @param include_bytes? boolean
+  --- @return Range4[]|Range6[]
+  function TSParser:included_ranges(include_bytes)
+    local len = ffi.new('uint32_t[1]')
+    local ranges = C.ts_parser_included_ranges(self, len)
+    return make_ranges(ranges, len[0], include_bytes)
+  end
+
+  --- @param _lex boolean
+  --- @param _parse boolean
+  --- @param _cb TSLoggerCallback
+  function TSParser:_set_logger(_lex, _parse, _cb)
+    -- TODO(lewis6991)
+  end
+
+  function TSParser:_logger()
+    -- TODO(lewis6991)
+  end
+end
+
 --- @class TSQueryCapture.ffi
 --- @field index integer
 --- @field node TSNode.ffi
@@ -922,7 +647,7 @@ end
 --- @class TSQueryCursor.ffi: TSQueryCursor.cdata
 local TSQueryCursor = {}
 
-do -- TSQueryCursor
+do --- TSQueryCursor
   --- @param match_id integer
   function TSQueryCursor:remove_match(match_id)
     C.ts_query_cursor_remove_match(self, match_id)
@@ -1029,7 +754,235 @@ do --- TSQuery
   -- end
 end
 
-do -- query_err_string
+do --- lang and wasm
+  -- static PMap(cstr_t) langs = MAP_INIT;
+  --
+  -- #ifdef HAVE_WASMTIME
+  -- static wasm_engine_t *wasmengine;
+  -- static TSWasmStore *ts_wasmstore;
+  -- #endif
+  --
+  -- // TSLanguage
+  --
+  -- #ifdef HAVE_WASMTIME
+  --
+  -- static const char *wasmerr_to_str(TSWasmErrorKind werr)
+  -- {
+  --   switch (werr) {
+  --   case TSWasmErrorKindParse:
+  --     return "PARSE";
+  --   case TSWasmErrorKindCompile:
+  --     return "COMPILE";
+  --   case TSWasmErrorKindInstantiate:
+  --     return "INSTANTIATE";
+  --   case TSWasmErrorKindAllocate:
+  --     return "ALLOCATE";
+  --   default:
+  --     return "UNKNOWN";
+  --   }
+  -- }
+  -- #endif
+  --
+  -- #ifdef HAVE_WASMTIME
+  -- static int tslua_add_language_from_wasm(lua_State *L)
+  -- {
+  --   return add_language(L, true);
+  -- }
+  -- #endif
+  --
+  -- static const TSLanguage *load_language_from_wasm(lua_State *L, const char *path,
+  --                                                  const char *lang_name)
+  -- {
+  -- #ifndef HAVE_WASMTIME
+  --   luaL_error(L, "Not supported");
+  --   return NULL;
+  -- #else
+  --   if (wasmengine == NULL) {
+  --     wasmengine = wasm_engine_new();
+  --   }
+  --   assert(wasmengine != NULL);
+  --
+  --   TSWasmError werr = { 0 };
+  --   if (ts_wasmstore == NULL) {
+  --     ts_wasmstore = ts_wasm_store_new(wasmengine, &werr);
+  --   }
+  --
+  --   if (werr.kind > 0) {
+  --     luaL_error(L, "Error creating wasm store: (%s) %s", wasmerr_to_str(werr.kind), werr.message);
+  --   }
+  --
+  --   size_t file_size = 0;
+  --   char *data = read_file(path, &file_size);
+  --
+  --   if (data == NULL) {
+  --     luaL_error(L, "Unable to read file", path);
+  --   }
+  --
+  --   const TSLanguage *lang = ts_wasm_store_load_language(ts_wasmstore, lang_name, data,
+  --                                                        (uint32_t)file_size, &werr);
+  --
+  --   xfree(data);
+  --
+  --   if (werr.kind > 0) {
+  --     luaL_error(L, "Failed to load WASM parser %s: (%s) %s", path, wasmerr_to_str(werr.kind),
+  --                werr.message);
+  --   }
+  --
+  --   if (lang == NULL) {
+  --     luaL_error(L, "Failed to load parser %s: internal error", path);
+  --   }
+  --
+  --   return lang;
+  -- #endif
+  -- }
+  --
+  -- static int add_language(lua_State *L, bool is_wasm)
+  -- {
+  --   const char *path = luaL_checkstring(L, 1);
+  --   const char *lang_name = luaL_checkstring(L, 2);
+  --   const char *symbol_name = lang_name;
+  --
+  --   if (!is_wasm && lua_gettop(L) >= 3 && !lua_isnil(L, 3)) {
+  --     symbol_name = luaL_checkstring(L, 3);
+  --   }
+  --
+  --   if (map_has(cstr_t, &langs, lang_name)) {
+  --     lua_pushboolean(L, true);
+  --     return 1;
+  --   }
+  --
+  --   const TSLanguage *lang = is_wasm
+  --                            ? load_language_from_wasm(L, path, lang_name)
+  --                            : load_language_from_object(L, path, lang_name, symbol_name);
+  --
+  --   uint32_t lang_version = ts_language_abi_version(lang);
+  --   if (lang_version < TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION
+  --       || lang_version > TREE_SITTER_LANGUAGE_VERSION) {
+  --     return luaL_error(L,
+  --                       "ABI version mismatch for %s: supported between %d and %d, found %d",
+  --                       path,
+  --                       TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION,
+  --                       TREE_SITTER_LANGUAGE_VERSION, lang_version);
+  --   }
+  --
+  --   pmap_put(cstr_t)(&langs, xstrdup(lang_name), (TSLanguage *)lang);
+  --
+  --   lua_pushboolean(L, true);
+  --   return 1;
+  -- }
+  --
+  -- static int tslua_inspect_lang(lua_State *L)
+  -- {
+  --   TSLanguage *lang = lang_check(L, 1);
+  --
+  --   lua_createtable(L, 0, 2);  // [retval]
+  --
+  --   {  // Symbols
+  --     uint32_t nsymbols = ts_language_symbol_count(lang);
+  --     assert(nsymbols < INT_MAX);
+  --
+  --     lua_createtable(L, (int)(nsymbols - 1), 1);  // [retval, symbols]
+  --     for (uint32_t i = 0; i < nsymbols; i++) {
+  --       TSSymbolType t = ts_language_symbol_type(lang, (TSSymbol)i);
+  --       if (t == TSSymbolTypeAuxiliary) {
+  --         // not used by the API
+  --         continue;
+  --       }
+  --       const char *name = ts_language_symbol_name(lang, (TSSymbol)i);
+  --       bool named = t != TSSymbolTypeAnonymous;
+  --       lua_pushboolean(L, named);  // [retval, symbols, is_named]
+  --       if (!named) {
+  --         char buf[256];
+  --         snprintf(buf, sizeof(buf), "\"%s\"", name);
+  --         lua_setfield(L, -2, buf);  // [retval, symbols]
+  --       } else {
+  --         lua_setfield(L, -2, name);  // [retval, symbols]
+  --       }
+  --     }
+  --
+  --     lua_setfield(L, -2, "symbols");  // [retval]
+  --   }
+  --
+  --   {  // Fields
+  --     uint32_t nfields = ts_language_field_count(lang);
+  --     lua_createtable(L, (int)nfields, 1);  // [retval, fields]
+  --     // Field IDs go from 1 to nfields inclusive (extra index 0 maps to NULL)
+  --     for (uint32_t i = 1; i <= nfields; i++) {
+  --       lua_pushstring(L, ts_language_field_name_for_id(lang, (TSFieldId)i));
+  --       lua_rawseti(L, -2, (int)i);  // [retval, fields]
+  --     }
+  --
+  --     lua_setfield(L, -2, "fields");  // [retval]
+  --   }
+  --
+  --   lua_pushboolean(L, ts_language_is_wasm(lang));
+  --   lua_setfield(L, -2, "_wasm");
+  --
+  --   lua_pushinteger(L, ts_language_abi_version(lang));  // [retval, version]
+  --   lua_setfield(L, -2, "abi_version");
+  --
+  --   {  // Metadata
+  --     const TSLanguageMetadata *meta = ts_language_metadata(lang);
+  --
+  --     if (meta != NULL) {
+  --       lua_createtable(L, 0, 3);
+  --
+  --       lua_pushinteger(L, meta->major_version);
+  --       lua_setfield(L, -2, "major_version");
+  --       lua_pushinteger(L, meta->minor_version);
+  --       lua_setfield(L, -2, "minor_version");
+  --       lua_pushinteger(L, meta->patch_version);
+  --       lua_setfield(L, -2, "patch_version");
+  --
+  --       lua_setfield(L, -2, "metadata");
+  --     }
+  --   }
+  --
+  --   lua_pushinteger(L, ts_language_state_count(lang));
+  --   lua_setfield(L, -2, "state_count");
+  --
+  --   {  // Supertypes
+  --     uint32_t nsupertypes;
+  --     const TSSymbol *supertypes = ts_language_supertypes(lang, &nsupertypes);
+  --
+  --     lua_createtable(L, 0, (int)nsupertypes);  // [retval, supertypes]
+  --     for (uint32_t i = 0; i < nsupertypes; i++) {
+  --       const TSSymbol supertype = *(supertypes + i);
+  --
+  --       uint32_t nsubtypes;
+  --       const TSSymbol *subtypes = ts_language_subtypes(lang, supertype, &nsubtypes);
+  --
+  --       lua_createtable(L, (int)nsubtypes, 0);
+  --       for (uint32_t j = 1; j <= nsubtypes; j++) {
+  --         lua_pushstring(L, ts_language_symbol_name(lang, *(subtypes + j)));
+  --         lua_rawseti(L, -2, (int)j);
+  --       }
+  --
+  --       lua_setfield(L, -2, ts_language_symbol_name(lang, supertype));
+  --     }
+  --
+  --     lua_setfield(L, -2, "supertypes");  // [retval]
+  --   }
+  --
+  --   return 1;
+  -- }
+  --
+  -- // TSParser
+  --
+  -- static void logger_gc(TSLogger logger)
+  -- {
+  --   if (!logger.log) {
+  --     return;
+  --   }
+  --
+  --   TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)logger.payload;
+  --   luaL_unref(opts->lstate, LUA_REGISTRYINDEX, opts->cb);
+  --   xfree(opts);
+  -- }
+  --
+end
+
+do --- query_err_string
   -- static const char *query_err_to_string(TSQueryError error_type)
   -- {
   --   switch (error_type) {
@@ -1144,145 +1097,147 @@ end
 
 local tsffi = {}
 
---- @type table<string, [ffi.namespace*, TSLanguage.cdata]>
-tsffi._langs = {}
+do --- tsffi
+  --- @type table<string, [ffi.namespace*, TSLanguage.cdata]>
+  tsffi._langs = {}
 
---- @param lang string
---- @return TSLanguage.cdata
-local function lang_check(lang)
-  vim.validate('lang', lang, 'string')
-  local l = tsffi._langs[lang][2]
-  if not l then
-    error(('no such language: %s'):format(lang), 2)
-  end
-  return l
-end
-
---- @param node TSNode.ffi
-local function node_check(node)
-  assert(ffi.istype('TSNode', node._node))
-end
-
---- @param query TSQuery.ffi
-local function query_check(query)
-  assert(ffi.istype('TSQuery', query))
-end
-
---- @param lang string
---- @return TSParser.ffi
-function tsffi._create_ts_parser(lang)
-  local parser = C.ts_parser_new()
-  ffi.gc(parser, C.ts_parser_delete)
-  C.ts_parser_set_language(parser, lang_check(lang))
-  return parser
-end
-
---- @param lang string Language to use for the query
---- @param query string Query string in s-expr syntax
---- @return TSQuery.ffi
-function tsffi._ts_parse_query(lang, query)
-  vim.validate('lang', lang, 'string')
-  vim.validate('query', query, 'string')
-
-  local language = lang_check(lang)
-  local error_offset = ffi.new('uint32_t[1]')
-  local error_type = ffi.new('TSQueryError[1]') --[[@as {[0]:TSQueryError}]]
-  local tsquery = C.ts_query_new(language, query, #query, error_offset, error_type)
-
-  if not tsquery then
-    -- TODO(lewis6991): query_err_string(src, (int)error_offset, error_type, err_msg, sizeof(err_msg));
-    error('not query')
-  end
-
-  ffi.gc(tsquery, C.ts_query_delete)
-
-  return tsquery
-end
-
---- @param node TSNode.ffi
---- @param query TSQuery.ffi
---- @param start integer?
---- @param stop integer?
---- @param opts? { max_start_depth?: integer, match_limit?: integer}
---- @return TSQueryCursor.cdata
-function tsffi._create_ts_querycursor(node, query, start, stop, opts)
-  node_check(node)
-  query_check(query)
-
-  local cursor = C.ts_query_cursor_new()
-  ffi.gc(cursor, C.ts_query_cursor_delete)
-
-  C.ts_query_cursor_exec(cursor, query, node._node)
-
-  if start then
-    local startp = ffi.new('TSPoint', start, 0) --[[@as TSPoint.cdata]]
-    local endp = ffi.new('TSPoint', stop or MAXLNUM, 0) --[[@as TSPoint.cdata]]
-    C.ts_query_cursor_set_point_range(cursor, startp, endp)
-  end
-
-  if opts then
-    if opts.max_start_depth then
-      C.ts_query_cursor_set_max_start_depth(cursor, opts.max_start_depth)
-    elseif opts.match_limit then
-      C.ts_query_cursor_set_match_limit(cursor, opts.match_limit)
+  --- @param lang string
+  --- @return TSLanguage.cdata
+  local function lang_check(lang)
+    vim.validate('lang', lang, 'string')
+    local l = tsffi._langs[lang][2]
+    if not l then
+      error(('no such language: %s'):format(lang), 2)
     end
+    return l
   end
 
-  return cursor
-end
-
---- @param path string
---- @param lang string
---- @param symbol_name? string
---- @return true?
-function tsffi._ts_add_language_from_object(path, lang, symbol_name)
-  symbol_name = symbol_name or lang
-  local symbol = 'tree_sitter_' .. symbol_name
-  ffi.cdef(('TSLanguage * %s(void);'):format(symbol))
-
-  local mod = ffi.load(path)
-
-  --- @type TSLanguage.cdata?
-  local language = mod[symbol]()
-
-  if not language then
-    error(("Language function '%s' returned NULL for '%s'"):format(symbol, lang))
+  --- @param node TSNode.ffi
+  local function node_check(node)
+    assert(ffi.istype('TSNode', node._node))
   end
 
-  local lang_version = C.ts_language_abi_version(language)
+  --- @param query TSQuery.ffi
+  local function query_check(query)
+    assert(ffi.istype('TSQuery', query))
+  end
 
-  if lang_version < TS_MIN_COMPATIBLE_LANG_VERSION then
-    error(
-      ('ABI version mismatch for %s: supported between %d and %d, found %d'):format(
-        path,
-        TS_MIN_COMPATIBLE_LANG_VERSION,
-        TS_LANGUAGE_VERSION,
-        lang_version
+  --- @param lang string
+  --- @return TSParser.ffi
+  function tsffi._create_ts_parser(lang)
+    local parser = C.ts_parser_new()
+    ffi.gc(parser, C.ts_parser_delete)
+    C.ts_parser_set_language(parser, lang_check(lang))
+    return parser
+  end
+
+  --- @param lang string Language to use for the query
+  --- @param query string Query string in s-expr syntax
+  --- @return TSQuery.ffi
+  function tsffi._ts_parse_query(lang, query)
+    vim.validate('lang', lang, 'string')
+    vim.validate('query', query, 'string')
+
+    local language = lang_check(lang)
+    local error_offset = ffi.new('uint32_t[1]')
+    local error_type = ffi.new('TSQueryError[1]') --[[@as {[0]:TSQueryError}]]
+    local tsquery = C.ts_query_new(language, query, #query, error_offset, error_type)
+
+    if not tsquery then
+      -- TODO(lewis6991): query_err_string(src, (int)error_offset, error_type, err_msg, sizeof(err_msg));
+      error('not query')
+    end
+
+    ffi.gc(tsquery, C.ts_query_delete)
+
+    return tsquery
+  end
+
+  --- @param node TSNode.ffi
+  --- @param query TSQuery.ffi
+  --- @param start integer?
+  --- @param stop integer?
+  --- @param opts? { max_start_depth?: integer, match_limit?: integer}
+  --- @return TSQueryCursor.cdata
+  function tsffi._create_ts_querycursor(node, query, start, stop, opts)
+    node_check(node)
+    query_check(query)
+
+    local cursor = C.ts_query_cursor_new()
+    ffi.gc(cursor, C.ts_query_cursor_delete)
+
+    C.ts_query_cursor_exec(cursor, query, node._node)
+
+    if start then
+      local startp = ffi.new('TSPoint', start, 0) --[[@as TSPoint.cdata]]
+      local endp = ffi.new('TSPoint', stop or MAXLNUM, 0) --[[@as TSPoint.cdata]]
+      C.ts_query_cursor_set_point_range(cursor, startp, endp)
+    end
+
+    if opts then
+      if opts.max_start_depth then
+        C.ts_query_cursor_set_max_start_depth(cursor, opts.max_start_depth)
+      elseif opts.match_limit then
+        C.ts_query_cursor_set_match_limit(cursor, opts.match_limit)
+      end
+    end
+
+    return cursor
+  end
+
+  --- @param path string
+  --- @param lang string
+  --- @param symbol_name? string
+  --- @return true?
+  function tsffi._ts_add_language_from_object(path, lang, symbol_name)
+    symbol_name = symbol_name or lang
+    local symbol = 'tree_sitter_' .. symbol_name
+    ffi.cdef(('TSLanguage * %s(void);'):format(symbol))
+
+    local mod = ffi.load(path)
+
+    --- @type TSLanguage.cdata?
+    local language = mod[symbol]()
+
+    if not language then
+      error(("Language function '%s' returned NULL for '%s'"):format(symbol, lang))
+    end
+
+    local lang_version = C.ts_language_abi_version(language)
+
+    if lang_version < TS_MIN_COMPATIBLE_LANG_VERSION then
+      error(
+        ('ABI version mismatch for %s: supported between %d and %d, found %d'):format(
+          path,
+          TS_MIN_COMPATIBLE_LANG_VERSION,
+          TS_LANGUAGE_VERSION,
+          lang_version
+        )
       )
-    )
+    end
+
+    -- Need to store **both** the mod and the language to prevent them from
+    -- being garbage collected.
+    tsffi._langs[lang] = { mod, language }
+
+    return true
   end
 
-  -- Need to store **both** the mod and the language to prevent them from
-  -- being garbage collected.
-  tsffi._langs[lang] = { mod, language }
-
-  return true
-end
-
---- @param lang string
---- @return boolean
-function tsffi._ts_has_language(lang)
-  return tsffi._langs[lang] ~= nil
-end
-
---- @param lang string
---- @return boolean
-function tsffi._ts_remove_language(lang)
-  local present = tsffi._ts_has_language(lang)
-  if tsffi._langs[lang] then
-    tsffi._langs[lang] = nil
+  --- @param lang string
+  --- @return boolean
+  function tsffi._ts_has_language(lang)
+    return tsffi._langs[lang] ~= nil
   end
-  return present
+
+  --- @param lang string
+  --- @return boolean
+  function tsffi._ts_remove_language(lang)
+    local present = tsffi._ts_has_language(lang)
+    if tsffi._langs[lang] then
+      tsffi._langs[lang] = nil
+    end
+    return present
+  end
 end
 
 local M = {
@@ -1316,7 +1271,16 @@ function M.setup()
   local api_path = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(modpath)), 'vendor', 'api.h')
 
   ffi.cdef(get_ts_cdef(api_path))
-  ffi.cdef([[void *free(void *);]])
+
+  ffi.cdef([[
+    void *free(void *);
+
+    TSTree *nvim_ts_parser_parse_buf(TSParser *p, TSTree *old_tree, int bufnr, uint64_t timeout_ns);
+  ]])
+
+  has_nvim_ts_parser_parse_buf = pcall(function()
+    return C.nvim_ts_parser_parse_buf
+  end)
 
   -- Can't metatype due to field-method conflicts:
   -- - TSNode.id
@@ -1341,9 +1305,9 @@ function M.setup()
 
   ffi.metatype('TSTree', {
     __index = TSTree,
-    __tostring = function()
-      return '<tree>'
-    end,
+    -- __tostring = function()
+    --   return '<tree>'
+    -- end,
   })
 
   ffi.metatype('TSQueryCursor', {
