@@ -572,33 +572,32 @@ do -- lang and wasm
 end
 
 do --- TSNode
+  TSNode.__index = TSNode
+
   --- @param node TSNode.cdata
   --- @return TSNode.ffi?
   function TSNode.new(node)
     if C.ts_node_is_null(node) then
       return
     end
-    return setmetatable({
-      _node = node,
-    }, {
-      __index = TSNode,
-      --- @param self TSNode.ffi
-      --- @return string
-      __tostring = function(self)
-        return '<node ' .. self:type() .. '>'
-      end,
-      --- @param self TSNode.ffi
-      --- @param obj TSNode.ffi
-      --- @return boolean
-      __eq = function(self, obj)
-        return self:equal(obj)
-      end,
-      --- @param self TSNode.ffi
-      --- @return integer
-      __len = function(self)
-        return self:child_count()
-      end,
-    })
+    return setmetatable({ _node = node }, TSNode)
+  end
+
+  --- @return string
+  function TSNode:__tostring()
+    return '<node ' .. self:type() .. '>'
+  end
+
+  --- @param obj TSNode.ffi
+  --- @return boolean
+  function TSNode:__eq(obj)
+    return self:equal(obj)
+  end
+
+  --- @param self TSNode.ffi
+  --- @return integer
+  function TSNode:__len()
+    return self:child_count()
   end
 
   -- TSNode.child_with_descendant = C.ts_node_child_with_descendant,
@@ -688,8 +687,7 @@ do --- TSNode
   --- trees.
   --- @return string
   function TSNode:id()
-    -- TODO(lewis6991): test
-    return tostring(self._node.id)
+    return ffi.string(self._node.id)
   end
 
   --- Get the range of the node.
@@ -864,6 +862,8 @@ end
 local TSQueryMatch = {}
 
 do --- TSQueryMatch
+  TSQueryMatch.__index = TSQueryMatch
+
   --- @param match TSQueryMatch.cdata
   --- @return TSQueryMatch.ffi
   function TSQueryMatch.new(match)
@@ -878,7 +878,7 @@ do --- TSQueryMatch
     return setmetatable({
       _captures = captures,
       _match = match,
-    }, { __index = TSQueryMatch })
+    }, TSQueryMatch)
   end
 
   --- @return integer match_id
