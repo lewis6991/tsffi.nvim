@@ -124,7 +124,7 @@ do -- TSTree
   --- @return TSTree
   function TSTree:copy()
     local copy = C.ts_tree_copy(self._tree)
-    -- ffi.gc(copy, C.ts_tree_delete)
+    ffi.gc(copy, C.ts_tree_delete)
     return copy
   end
 end
@@ -134,14 +134,6 @@ end
 local TSParser = {}
 
 do -- TSParser
-  --   { "__gc", parser_gc },
-  -- static int parser_gc(lua_State *L)
-  -- {
-  --   logger_gc(ts_parser_logger(p));
-  --   ts_parser_delete(p);
-  --   return 0;
-  -- }
-
   -- static bool on_parser_progress(TSParseState *state)
   -- {
   --   TSLuaParserCallbackPayload *payload = state->payload;
@@ -239,7 +231,7 @@ do -- TSParser
     end
 
     if new_tree then
-      -- ffi.gc(new_tree, C.ts_tree_delete)
+      ffi.gc(new_tree, C.ts_tree_delete)
     else
       if not C.ts_parser_language(self._parser) then
         error('Language was unset, or has an incompatible ABI.')
@@ -252,7 +244,7 @@ do -- TSParser
     local changed = tree and C.ts_tree_get_changed_ranges(tree._tree, new_tree, n_ranges)
       or C.ts_tree_included_ranges(new_tree, n_ranges)
 
-    -- ffi.gc(changed, C.free)
+    ffi.gc(changed, C.free)
 
     local ntree = TSTree.new(new_tree)
 
@@ -608,8 +600,21 @@ do --- TSNode
       _node = node,
     }, {
       __index = TSNode,
+      --- @param self TSNode.ffi
+      --- @return string
       __tostring = function(self)
         return '<node ' .. self:type() .. '>'
+      end,
+      --- @param self TSNode.ffi
+      --- @param obj TSNode.ffi
+      --- @return boolean
+      __eq = function(self, obj)
+        return self:equal(obj)
+      end,
+      --- @param self TSNode.ffi
+      --- @return integer
+      __len = function(self)
+        return self:child_count()
       end,
     })
   end
@@ -620,21 +625,16 @@ do --- TSNode
   -- TSNode.next_named_sibling = C.ts_node_next_named_sibling,
   -- TSNode.prev_named_sibling = C.ts_node_prev_named_sibling,
 
-  -- function TSNode:parent()
-  --   return C.ts_node_parent(self)
-  -- end
+  --- @return TSNode.ffi?
+  function TSNode:parent()
+    return TSNode.new(C.ts_node_parent(self._node))
+  end
 
-  -- function TSNode:equal(node)
-  --   return C.ts_node_eq(self, node)
-  -- end
-
-  -- function TSNode:__eq(node)
-  --   return C.ts_node_eq(self, node)
-  -- end
-
-  -- function TSNode:__len()
-  --   return C.ts_node_child_count(self)
-  -- end
+  --- @param node TSNode.ffi
+  --- @return boolean
+  function TSNode:equal(node)
+    return C.ts_node_eq(self._node, node._node)
+  end
 
   --- @return integer
   function TSNode:child_count()
@@ -646,46 +646,55 @@ do --- TSNode
     return C.ts_node_named_child_count(self._node)
   end
 
-  -- function TSNode:named()
-  --   return C.ts_node_is_named(self)
-  -- end
+  --- @return boolean
+  function TSNode:named()
+    return C.ts_node_is_named(self._node)
+  end
 
-  -- function TSNode:missing()
-  --   return C.ts_node_is_missing(self)
-  -- end
+  --- @return boolean
+  function TSNode:missing()
+    return C.ts_node_is_missing(self._node)
+  end
 
-  -- function TSNode:extra()
-  --   return C.ts_node_is_extra(self)
-  -- end
+  --- @return boolean
+  function TSNode:extra()
+    return C.ts_node_is_extra(self._node)
+  end
 
-  -- function TSNode:has_changes()
-  --   return C.ts_node_has_changes(self)
-  -- end
+  --- @return boolean
+  function TSNode:has_changes()
+    return C.ts_node_has_changes(self._node)
+  end
 
-  -- function TSNode:has_error()
-  --   return C.ts_node_has_error(self)
-  -- end
+  --- @return boolean
+  function TSNode:has_error()
+    return C.ts_node_has_error(self._node)
+  end
 
   --- @return string
   function TSNode:type()
     return ffi.string(C.ts_node_type(self._node))
   end
 
-  -- function TSNode:symbol()
-  --   return C.ts_node_symbol(self)
-  -- end
+  function TSNode:symbol()
+    return C.ts_node_symbol(self._node)
+  end
 
-  -- function TSNode:sexpr()
-  --   return ffi.string(C.ts_node_string(self))
-  -- end
+  function TSNode:sexpr()
+    return ffi.string(C.ts_node_string(self._node))
+  end
 
-  -- function TSNode:child(index)
-  --   return C.ts_node_child(self, index)
-  -- end
+  --- @param index integer
+  --- @return TSNode.ffi?
+  function TSNode:child(index)
+    return TSNode.new(C.ts_node_child(self._node, index))
+  end
 
-  -- function TSNode:named_child(index)
-  --   return C.ts_node_named_child(self, index)
-  -- end
+  --- @param index integer
+  --- @return TSNode.ffi?
+  function TSNode:named_child(index)
+    return TSNode.new(C.ts_node_named_child(self._node, index))
+  end
 
   --- Get a unique identifier for the node inside its own tree.
   ---
@@ -747,20 +756,20 @@ do --- TSNode
     return e.row, e.column, ebyte
   end
 
-  -- --- Returns a list of all the node's children that have the given field name.
-  -- --- @param name string
-  -- --- @return TSNode[]
-  -- function TSNode:field(name)
-  --   local r = {} --- @type TSNode[]
-  --   for i = 0, self:child_count() - 1 do
-  --     local child_field_name = ffi.string(C.ts_node_field_name_for_child(self, i))
-  --     if name == child_field_name then
-  --       local child = C.ts_node_child(self, i)
-  --       r[#r + 1] = child
-  --     end
-  --   end
-  --   return r
-  -- end
+  --- Returns a list of all the node's children that have the given field name.
+  --- @param name string
+  --- @return TSNode[]
+  function TSNode:field(name)
+    local r = {} --- @type TSNode[]
+    for i = 0, self:child_count() - 1 do
+      local child_field_name = ffi.string(C.ts_node_field_name_for_child(self._node, i))
+      if name == child_field_name then
+        local child = C.ts_node_child(self._node, i)
+        r[#r + 1] = child
+      end
+    end
+    return r
+  end
 
   --- Get the smallest node within this node that spans the given range of (row,
   --- column) positions
@@ -913,13 +922,6 @@ end
 local TSQueryCursor = {}
 
 do -- TSQueryCursor
-  -- static int querycursor_gc(lua_State *L)
-  -- {
-  --   TSQueryCursor *cursor = querycursor_check(L, 1);
-  --   ts_query_cursor_delete(cursor);
-  --   return 0;
-  -- }
-
   --- @param match_id integer
   function TSQueryCursor:remove_match(match_id)
     C.ts_query_cursor_remove_match(self._cursor, match_id)
@@ -953,13 +955,6 @@ end
 local TSQuery = {}
 
 do --- TSQuery
-  -- static int query_gc(lua_State *L)
-  -- {
-  --   TSQuery *query = query_check(L, 1);
-  --   ts_query_delete(query);
-  --   return 0;
-  -- }
-
   --- Get information about the query's patterns and captures.
   --- @return TSQueryInfo
   function TSQuery:inspect()
@@ -1149,14 +1144,14 @@ end
 
 local tsffi = {}
 
---- @type table<string, TSLanguage.cdata>
+--- @type table<string, [ffi.namespace*, TSLanguage.cdata]>
 tsffi._langs = {}
 
 --- @param lang string
 --- @return TSLanguage.cdata
 local function lang_check(lang)
   vim.validate('lang', lang, 'string')
-  local l = tsffi._langs[lang]
+  local l = tsffi._langs[lang][2]
   if not l then
     error(('no such language: %s'):format(lang), 2)
   end
@@ -1177,7 +1172,7 @@ end
 --- @return TSParser.ffi
 function tsffi._create_ts_parser(lang)
   local parser = C.ts_parser_new()
-  -- ffi.gc(parser, C.ts_parser_delete)
+  ffi.gc(parser, C.ts_parser_delete)
   C.ts_parser_set_language(parser, lang_check(lang))
   return setmetatable({
     _parser = parser,
@@ -1206,6 +1201,8 @@ function tsffi._ts_parse_query(lang, query)
     error('not query')
   end
 
+  ffi.gc(tsquery, C.ts_query_delete)
+
   return setmetatable({
     _query = tsquery,
     _lang = language,
@@ -1228,7 +1225,7 @@ function tsffi._create_ts_querycursor(node, query, start, stop, opts)
   query_check(query)
 
   local cursor = C.ts_query_cursor_new()
-  -- ffi.gc(cursor, C.ts_query_cursor_delete)
+  ffi.gc(cursor, C.ts_query_cursor_delete)
 
   C.ts_query_cursor_exec(cursor, query._query, node._node)
 
@@ -1258,8 +1255,10 @@ function tsffi._ts_add_language_from_object(path, lang, symbol_name)
   local symbol = 'tree_sitter_' .. symbol_name
   ffi.cdef(('TSLanguage * %s(void);'):format(symbol))
 
+  local mod = ffi.load(path)
+
   --- @type TSLanguage.cdata?
-  local language = ffi.load(path)[symbol]()
+  local language = mod[symbol]()
 
   if not language then
     error(("Language function '%s' returned NULL for '%s'"):format(symbol, lang))
@@ -1278,7 +1277,9 @@ function tsffi._ts_add_language_from_object(path, lang, symbol_name)
     )
   end
 
-  tsffi._langs[lang] = language
+  -- Need to store **both** the mod and the language to prevent them from
+  -- being garbage collected.
+  tsffi._langs[lang] = { mod, language }
 
   return true
 end
@@ -1289,15 +1290,15 @@ function tsffi._ts_has_language(lang)
   return tsffi._langs[lang] ~= nil
 end
 
--- --- @param lang string
--- --- @return boolean
--- function tsffi._ts_remove_language(lang)
---   local present = tsffi._ts_has_language(lang)
---   if tsffi._langs[lang] then
---     tsffi._langs[lang] = nil
---   end
---   return present
--- end
+--- @param lang string
+--- @return boolean
+function tsffi._ts_remove_language(lang)
+  local present = tsffi._ts_has_language(lang)
+  if tsffi._langs[lang] then
+    tsffi._langs[lang] = nil
+  end
+  return present
+end
 
 local M = {
   tsffi = tsffi,
