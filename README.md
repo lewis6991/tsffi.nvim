@@ -24,7 +24,7 @@ nvim -u nvimrc.lua <C file>
 # e.g. nvim -u nvimrc.lua .deps/tree-sitter/lib/include/tree_sitter/api.h
 ```
 
-### Status
+## Status
 
 Seems to work.
 Can open buffer and it highlights, however it crashes when scrolling.
@@ -66,3 +66,15 @@ Thread 0 Crashed::  Dispatch queue: com.apple.main-thread
 17  nvim                          	       0x102248970 main + 4324 (main.c:654)
 18  dyld                          	       0x18d12eb4c start + 6000
 ```
+
+## Todo
+- [ ] Stop crashes
+- [ ] Manage memory using `ffi.gc` and `ffi.free`
+- [ ] Use `ffi.metatype` where possible
+  - Cannot use it for `TSNode` or `TSQueryMatch` without upstream changes.
+- [ ] Make it more efficiently read nvim buffers.
+
+  At the moment we just call `nvim_buf_get_text()` for the whole buffer before parsing.
+
+  Ideally we should use the `TSInput` struct with the `read` callback, however callbacks
+  are slow in LuaJIT-FFI.
