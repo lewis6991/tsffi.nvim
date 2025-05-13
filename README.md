@@ -20,7 +20,7 @@ nvim -u nvimrc.lua <C file>
 ## Todo
 - [x] Stop crashes
 - [x] Manage memory using `ffi.gc` and `ffi.free`
-- [ ] Use `ffi.metatype` where possible
+- [x] Use `ffi.metatype` where possible
   - Cannot use it for `TSNode` or `TSQueryMatch` without upstream changes.
 - [ ] Make it more efficiently read nvim buffers.
 

@@ -46,26 +46,12 @@ local function make_ranges(ranges, length, include_bytes)
 end
 
 --- @class TSTree.ffi : TSTree
---- @field _tree TSTree.cdata
 local TSTree = {}
 
 do -- TSTree
-  --- @param tree TSTree.cdata
-  --- @return TSTree.ffi
-  function TSTree.new(tree)
-    return setmetatable({
-      _tree = tree,
-    }, {
-      __index = TSTree,
-      __tostring = function()
-        return '<tree>'
-      end,
-    })
-  end
-
   --- @return TSNode.ffi
   function TSTree:root()
-    return assert(TSNode.new(C.ts_tree_root_node(self._tree)))
+    return assert(TSNode.new(C.ts_tree_root_node(self)))
   end
 
   --- @param start_byte integer
@@ -108,14 +94,14 @@ do -- TSTree
       ffi.new('TSPoint', end_row_new, end_col_new)
     ) --[[@as TSInputEdit.cdata]]
 
-    C.ts_tree_edit(self._tree, input)
+    C.ts_tree_edit(self, input)
   end
 
   --- @param include_bytes boolean?
   --- @return Range4[]|Range6[]
   function TSTree:included_ranges(include_bytes)
     local len = ffi.new('uint32_t[1]')
-    local ranges = C.ts_tree_included_ranges(self._tree, len)
+    local ranges = C.ts_tree_included_ranges(self, len)
     local r = make_ranges(ranges, len[0], include_bytes)
     -- C.free(ranges)
     return r
@@ -123,14 +109,13 @@ do -- TSTree
 
   --- @return TSTree
   function TSTree:copy()
-    local copy = C.ts_tree_copy(self._tree)
+    local copy = C.ts_tree_copy(self)
     ffi.gc(copy, C.ts_tree_delete)
     return copy
   end
 end
 
 --- @class TSParser.ffi : TSParser
---- @field _parser TSParser.cdata
 local TSParser = {}
 
 do -- TSParser
@@ -205,14 +190,13 @@ do -- TSParser
   --- @return TSTree.ffi?
   --- @return Range4[]|Range6[]?
   function TSParser:parse(tree, source, include_bytes, _timeout_ns)
-    local t = tree and tree._tree or nil
     local new_tree = nil
     if type(source) == 'string' then
-      new_tree = C.ts_parser_parse_string(self._parser, t, source, #source)
+      new_tree = C.ts_parser_parse_string(self, tree, source, #source)
     elseif type(source) == 'number' then
       local textl = vim.api.nvim_buf_get_text(source, 0, 0, -1, -1, {})
       local text = table.concat(textl, '\n')
-      new_tree = C.ts_parser_parse_string(self._parser, nil, text, #text)
+      new_tree = C.ts_parser_parse_string(self, tree, text, #text)
       -- input = (TSInput){ (void *)buf, input_cb, TSInputEncodingUTF8, NULL };
       -- if (!lua_isnil(L, 5)) {
       --   uint64_t timeout_ns = (uint64_t)lua_tointeger(L, 5);
@@ -233,7 +217,7 @@ do -- TSParser
     if new_tree then
       ffi.gc(new_tree, C.ts_tree_delete)
     else
-      if not C.ts_parser_language(self._parser) then
+      if not C.ts_parser_language(self) then
         error('Language was unset, or has an incompatible ABI.')
       end
       return
@@ -241,18 +225,16 @@ do -- TSParser
 
     local n_ranges = ffi.new('uint32_t[1]')
 
-    local changed = tree and C.ts_tree_get_changed_ranges(tree._tree, new_tree, n_ranges)
+    local changed = tree and C.ts_tree_get_changed_ranges(tree, new_tree, n_ranges)
       or C.ts_tree_included_ranges(new_tree, n_ranges)
 
     ffi.gc(changed, C.free)
 
-    local ntree = TSTree.new(new_tree)
-
-    return ntree, make_ranges(changed, n_ranges[0], include_bytes)
+    return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
   end
 
   function TSParser:reset()
-    C.ts_parser_reset(self._parser)
+    C.ts_parser_reset(self)
   end
 
   local function range_err()
@@ -300,14 +282,14 @@ do -- TSParser
       range_from_lua(ranges[index], tsranges[index - 1])
     end
 
-    C.ts_parser_set_included_ranges(self._parser, tsranges, tbl_len)
+    C.ts_parser_set_included_ranges(self, tsranges, tbl_len)
   end
 
   --- @param include_bytes? boolean
   --- @return Range4[]|Range6[]
   function TSParser:included_ranges(include_bytes)
     local len = ffi.new('uint32_t[1]')
-    local ranges = C.ts_parser_included_ranges(self._parser, len)
+    local ranges = C.ts_parser_included_ranges(self, len)
     return make_ranges(ranges, len[0], include_bytes)
   end
 
@@ -860,7 +842,7 @@ do --- TSNode
   --- Get the |TSTree| of the node.
   --- @return TSTree.ffi
   function TSNode:tree()
-    return TSTree.new(self._node.tree)
+    return self._node.tree
   end
 
   --- Return the number of bytes spanned by this node.
@@ -917,14 +899,13 @@ do --- TSQueryMatch
   end
 end
 
---- @class TSQueryCursor.ffi
---- @field _cursor TSQueryCursor.cdata
+--- @class TSQueryCursor.ffi: TSQueryCursor.cdata
 local TSQueryCursor = {}
 
 do -- TSQueryCursor
   --- @param match_id integer
   function TSQueryCursor:remove_match(match_id)
-    C.ts_query_cursor_remove_match(self._cursor, match_id)
+    C.ts_query_cursor_remove_match(self, match_id)
   end
 
   --- @return integer? capture
@@ -934,7 +915,7 @@ do -- TSQueryCursor
     local match = ffi.new('TSQueryMatch') --[[@as TSQueryMatch.cdata]]
 
     local capture_index = ffi.new('uint32_t[1]')
-    if C.ts_query_cursor_next_capture(self._cursor, match, capture_index) then
+    if C.ts_query_cursor_next_capture(self, match, capture_index) then
       local capture = match.captures[capture_index[0]]
       local node = TSNode.new(capture.node)
       return capture.index + 1, node, TSQueryMatch.new(match)
@@ -944,14 +925,13 @@ do -- TSQueryCursor
   --- @return TSQueryMatch.ffi? match
   function TSQueryCursor:next_match()
     local match = ffi.new('TSQueryMatch') --[[@as TSQueryMatch.ffi]]
-    if C.ts_query_cursor_next_match(self._cursor, match) then
+    if C.ts_query_cursor_next_match(self, match) then
       return TSQueryMatch.new(match)
     end
   end
 end
 
 --- @class TSQuery.ffi : TSQuery
---- @field _query TSQuery.cdata
 local TSQuery = {}
 
 do --- TSQuery
@@ -960,11 +940,11 @@ do --- TSQuery
   function TSQuery:inspect()
     local r = {}
 
-    local n_pat = C.ts_query_pattern_count(self._query)
+    local n_pat = C.ts_query_pattern_count(self)
     local pats = {} --- @type table<integer, (integer|string)[][]>
     for i = 1, n_pat do
       local len = ffi.new('uint32_t[1]')
-      local step = C.ts_query_predicates_for_pattern(self._query, i - 1, len)
+      local step = C.ts_query_predicates_for_pattern(self, i - 1, len)
       if len[0] > 0 then
         pats[i] = {}
         local pred = {} --- @type (integer|string)[]
@@ -974,7 +954,7 @@ do --- TSQuery
             pred = {}
           elseif step[k].type == 'TSQueryPredicateStepTypeString' then
             local strlen = ffi.new('uint32_t[1]')
-            local str = C.ts_query_string_value_for_id(self._query, step[k].value_id, strlen)
+            local str = C.ts_query_string_value_for_id(self, step[k].value_id, strlen)
             pred[#pred + 1] = ffi.string(str, strlen[0])
           elseif step[k].type == 'TSQueryPredicateStepTypeCapture' then
             pred[#pred + 1] = step[k].value_id + 1
@@ -986,11 +966,11 @@ do --- TSQuery
     end
     r.patterns = pats
 
-    local n_captures = C.ts_query_capture_count(self._query)
+    local n_captures = C.ts_query_capture_count(self)
     local captures = {} --- @type table<integer, string>
     for i = 1, n_captures do
       local strlen = ffi.new('uint32_t[1]')
-      local str = C.ts_query_capture_name_for_id(self._query, i - 1, strlen)
+      local str = C.ts_query_capture_name_for_id(self, i - 1, strlen)
       captures[i] = ffi.string(str, strlen[0])
     end
     r.captures = captures
@@ -1165,7 +1145,7 @@ end
 
 --- @param query TSQuery.ffi
 local function query_check(query)
-  assert(ffi.istype('TSQuery', query._query))
+  assert(ffi.istype('TSQuery', query))
 end
 
 --- @param lang string
@@ -1174,14 +1154,7 @@ function tsffi._create_ts_parser(lang)
   local parser = C.ts_parser_new()
   ffi.gc(parser, C.ts_parser_delete)
   C.ts_parser_set_language(parser, lang_check(lang))
-  return setmetatable({
-    _parser = parser,
-  }, {
-    __index = TSParser,
-    __tostring = function()
-      return '<parser>'
-    end,
-  })
+  return parser
 end
 
 --- @param lang string Language to use for the query
@@ -1203,15 +1176,7 @@ function tsffi._ts_parse_query(lang, query)
 
   ffi.gc(tsquery, C.ts_query_delete)
 
-  return setmetatable({
-    _query = tsquery,
-    _lang = language,
-  }, {
-    __index = TSQuery,
-    __tostring = function()
-      return '<query>'
-    end,
-  })
+  return tsquery
 end
 
 --- @param node TSNode.ffi
@@ -1219,7 +1184,7 @@ end
 --- @param start integer?
 --- @param stop integer?
 --- @param opts? { max_start_depth?: integer, match_limit?: integer}
---- @return TSQueryCursor.ffi
+--- @return TSQueryCursor.cdata
 function tsffi._create_ts_querycursor(node, query, start, stop, opts)
   node_check(node)
   query_check(query)
@@ -1227,7 +1192,7 @@ function tsffi._create_ts_querycursor(node, query, start, stop, opts)
   local cursor = C.ts_query_cursor_new()
   ffi.gc(cursor, C.ts_query_cursor_delete)
 
-  C.ts_query_cursor_exec(cursor, query._query, node._node)
+  C.ts_query_cursor_exec(cursor, query, node._node)
 
   if start then
     local startp = ffi.new('TSPoint', start, 0) --[[@as TSPoint.cdata]]
@@ -1243,7 +1208,7 @@ function tsffi._create_ts_querycursor(node, query, start, stop, opts)
     end
   end
 
-  return setmetatable({ _cursor = cursor }, { __index = TSQueryCursor })
+  return cursor
 end
 
 --- @param path string
@@ -1340,11 +1305,35 @@ function M.setup()
   --
   -- For now wrap all cdata objects in a table
 
-  -- ffi.metatype('TSParser', { __index = TSParser })
-  -- ffi.metatype('TSTree', { __index = TSTree })
-  -- ffi.metatype('TSQueryCursor', { __index = TSQueryCursor })
+  ffi.metatype('TSParser', {
+    __index = TSParser,
+    __tostring = function()
+      return '<parser>'
+    end,
+  })
+
+  ffi.metatype('TSQuery', {
+    __index = TSQuery,
+    __tostring = function()
+      return '<query>'
+    end,
+  })
+
+  ffi.metatype('TSTree', {
+    __index = TSTree,
+    __tostring = function()
+      return '<tree>'
+    end,
+  })
+
+  ffi.metatype('TSQueryCursor', {
+    __index = TSQueryCursor,
+    __tostring = function()
+      return '<treecursor>'
+    end,
+  })
+
   -- ffi.metatype('TSNode', { __index = TSNode })
-  -- ffi.metatype('TSQuery', { __index = TSQuery })
   -- ffi.metatype('TSQueryMatch', { __index = TSQueryMatch })
 
   function _G.type(obj)
