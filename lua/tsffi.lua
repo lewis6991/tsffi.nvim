@@ -102,9 +102,8 @@ do -- TSTree
   function TSTree:included_ranges(include_bytes)
     local len = ffi.new('uint32_t[1]')
     local ranges = C.ts_tree_included_ranges(self, len)
-    local r = make_ranges(ranges, len[0], include_bytes)
-    -- C.free(ranges)
-    return r
+    ffi.gc(ranges, C.free)
+    return make_ranges(ranges, len[0], include_bytes)
   end
 
   --- @return TSTree
@@ -600,11 +599,32 @@ do --- TSNode
     return self:child_count()
   end
 
-  -- TSNode.child_with_descendant = C.ts_node_child_with_descendant,
-  -- TSNode.next_sibling = C.ts_node_next_sibling,
-  -- TSNode.prev_sibling = C.ts_node_prev_sibling,
-  -- TSNode.next_named_sibling = C.ts_node_next_named_sibling,
-  -- TSNode.prev_named_sibling = C.ts_node_prev_named_sibling,
+  --- @param descendant TSNode.ffi
+  --- @return TSNode.ffi?
+  function TSNode:child_with_descendant(descendant)
+    return TSNode.new(C.ts_node_child_with_descendant(self._node, descendant._node))
+  end
+
+  --- @return TSNode.ffi?
+  function TSNode:next_sibling()
+    return TSNode.new(C.ts_node_next_sibling(self._node))
+  end
+
+  --- @return TSNode.ffi?
+  function TSNode:prev_sibling()
+    return TSNode.new(C.ts_node_prev_sibling(self._node))
+  end
+
+  --- @return TSNode.ffi?
+  function TSNode:next_named_sibling()
+    return TSNode.new(C.ts_node_next_named_sibling(self._node))
+  end
+
+  --- @return TSNode.ffi?
+  function TSNode:prev_named_sibling()
+    local node = C.ts_node_prev_named_sibling(self._node)
+    return TSNode.new(node)
+  end
 
   --- @return TSNode.ffi?
   function TSNode:parent()
