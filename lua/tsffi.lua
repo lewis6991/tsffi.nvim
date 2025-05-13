@@ -1303,28 +1303,6 @@ local M = {
   tsffi = tsffi,
 }
 
---- @param ts_api_path string
-function M.init(ts_api_path)
-  ffi.cdef(get_ts_cdef(ts_api_path))
-  ffi.cdef([[void *free(void *);]])
-
-  -- Can't metatype due to field-method conflicts:
-  -- - TSNode.id
-  -- - TSNode.tree
-  -- - TSQueryMatch.captures
-  --
-  -- For now wrap all cdata objects in a table
-
-  -- ffi.metatype('TSParser', { __index = TSParser })
-  -- ffi.metatype('TSTree', { __index = TSTree })
-  -- ffi.metatype('TSQueryCursor', { __index = TSQueryCursor })
-  -- ffi.metatype('TSNode', { __index = TSNode })
-  -- ffi.metatype('TSQuery', { __index = TSQuery })
-  -- ffi.metatype('TSQueryMatch', { __index = TSQueryMatch })
-end
-
-local otype = type
-
 --- @return string
 local function get_current_module_path()
   -- debug.getinfo(1, "S") gets information about the current function (level 1)
@@ -1345,10 +1323,28 @@ local function get_current_module_path()
   return vim.fs.abspath(path)
 end
 
+local otype = type
+
 function M.setup()
   local modpath = get_current_module_path()
   local api_path = vim.fs.joinpath(vim.fs.dirname(vim.fs.dirname(modpath)), 'vendor', 'api.h')
-  M.init(api_path)
+
+  ffi.cdef(get_ts_cdef(api_path))
+  ffi.cdef([[void *free(void *);]])
+
+  -- Can't metatype due to field-method conflicts:
+  -- - TSNode.id
+  -- - TSNode.tree
+  -- - TSQueryMatch.captures
+  --
+  -- For now wrap all cdata objects in a table
+
+  -- ffi.metatype('TSParser', { __index = TSParser })
+  -- ffi.metatype('TSTree', { __index = TSTree })
+  -- ffi.metatype('TSQueryCursor', { __index = TSQueryCursor })
+  -- ffi.metatype('TSNode', { __index = TSNode })
+  -- ffi.metatype('TSQuery', { __index = TSQuery })
+  -- ffi.metatype('TSQueryMatch', { __index = TSQueryMatch })
 
   function _G.type(obj)
     local r = otype(obj)
