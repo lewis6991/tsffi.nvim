@@ -8,6 +8,18 @@ Why? The regular Lua-C API can be quite slow due to contexts switches. LuaJIT's 
 
 ```bash
 make .deps/tree-sitter
+```
+
+```lua
+local tsffi = require('tsffi')
+tsffi.init('.deps/tree-sitter/lib/include/tree_sitter/api.h')
+tsffi.setup()
+```
+
+## Test
+
+```bash
+make .deps/tree-sitter
 nvim -u nvimrc.lua <C file>
 # e.g. nvim -u nvimrc.lua .deps/tree-sitter/lib/include/tree_sitter/api.h
 ```
