@@ -274,27 +274,27 @@ do --- TSNode
     return TSNode.new(C.ts_node_named_descendant_for_point_range(self._node, startp, endp))
   end
 
-  -- --- Iterates over all the direct children of {TSNode}, regardless of whether
-  -- --- they are named or not.
-  -- --- Returns the child node plus the eventual field name corresponding to this
-  -- --- child node.
-  -- --- @return fun(): TSNode?, string?
-  -- function TSNode:iter_children()
-  --   local child_index = 0
-  --
-  --   return function()
-  --     if child_index >= self:child_count() then
-  --       return
-  --     end
-  --
-  --     local child = self:child(child_index)
-  --     local field = C.ts_node_field_name_for_child(self, child_index)
-  --
-  --     child_index = child_index + 1
-  --
-  --     return child, ffi.string(field)
-  --   end
-  -- end
+  --- Iterates over all the direct children of {TSNode}, regardless of whether
+  --- they are named or not.
+  --- Returns the child node plus the eventual field name corresponding to this
+  --- child node.
+  --- @return fun(): TSNode.ffi?, string?
+  function TSNode:iter_children()
+    local child_index = 0
+
+    return function()
+      if child_index >= self:child_count() then
+        return
+      end
+
+      local child = self:child(child_index)
+      local field = C.ts_node_field_name_for_child(self, child_index)
+
+      child_index = child_index + 1
+
+      return child, ffi.string(field)
+    end
+  end
 
   --- @return boolean
   function TSNode:is_null()
@@ -318,16 +318,16 @@ do --- TSNode
     return false
   end
 
-  -- --- Returns a list of the node's named children.
-  -- --- @return TSNode[]
-  -- function TSNode:named_children()
-  --   local r = {} --- @type TSNode[]
-  --   for i = 0, self:named_child_count() - 1 do
-  --     local child = C.ts_node_named_child(self, i)
-  --     r[#r + 1] = child
-  --   end
-  --   return r
-  -- end
+  --- Returns a list of the node's named children.
+  --- @return TSNode[]
+  function TSNode:named_children()
+    local r = {} --- @type TSNode[]
+    for i = 0, self:named_child_count() - 1 do
+      local child = C.ts_node_named_child(self, i)
+      r[#r + 1] = child
+    end
+    return r
+  end
 
   --- @return TSNode.ffi?
   function TSNode:root()
@@ -723,35 +723,35 @@ do --- TSQuery
     return r
   end
 
-  -- --- Disable a specific capture in this query; once disabled the capture cannot be re-enabled.
-  -- --- {capture_name} should not include a leading "@".
-  -- ---
-  -- --- Example: To disable the `@variable.parameter` capture from the vimdoc highlights query:
-  -- --- ```lua
-  -- --- local query = vim.treesitter.query.get('vimdoc', 'highlights')
-  -- --- query.query:disable_capture("variable.parameter")
-  -- --- vim.treesitter.get_parser():parse()
-  -- --- ```
-  -- ---@param capture_name string
-  -- function TSQuery:disable_capture(capture_name)
-  --   C.ts_query_disable_capture(self, capture_name, #capture_name)
-  -- end
+  --- Disable a specific capture in this query; once disabled the capture cannot be re-enabled.
+  --- {capture_name} should not include a leading "@".
+  ---
+  --- Example: To disable the `@variable.parameter` capture from the vimdoc highlights query:
+  --- ```lua
+  --- local query = vim.treesitter.query.get('vimdoc', 'highlights')
+  --- query.query:disable_capture("variable.parameter")
+  --- vim.treesitter.get_parser():parse()
+  --- ```
+  ---@param capture_name string
+  function TSQuery:disable_capture(capture_name)
+    C.ts_query_disable_capture(self, capture_name, #capture_name)
+  end
 
-  -- --- Disable a specific pattern in this query; once disabled the pattern cannot be re-enabled.
-  -- --- The {pattern_index} for a particular match can be obtained with |:Inspect!|, or by reading
-  -- --- the source of the query (i.e. from |vim.treesitter.query.get_files()|).
-  -- ---
-  -- --- Example: To disable `|` links in vimdoc but keep other `@markup.link`s highlighted:
-  -- --- ```lua
-  -- --- local link_pattern = 9 -- from :Inspect!
-  -- --- local query = vim.treesitter.query.get('vimdoc', 'highlights')
-  -- --- query.query:disable_pattern(link_pattern)
-  -- --- local tree = vim.treesitter.get_parser():parse()[1]
-  -- --- ```
-  -- ---@param pattern_index integer
-  -- function TSQuery:disable_pattern(pattern_index)
-  --   C.ts_query_disable_pattern(self, pattern_index - 1)
-  -- end
+  --- Disable a specific pattern in this query; once disabled the pattern cannot be re-enabled.
+  --- The {pattern_index} for a particular match can be obtained with |:Inspect!|, or by reading
+  --- the source of the query (i.e. from |vim.treesitter.query.get_files()|).
+  ---
+  --- Example: To disable `|` links in vimdoc but keep other `@markup.link`s highlighted:
+  --- ```lua
+  --- local link_pattern = 9 -- from :Inspect!
+  --- local query = vim.treesitter.query.get('vimdoc', 'highlights')
+  --- query.query:disable_pattern(link_pattern)
+  --- local tree = vim.treesitter.get_parser():parse()[1]
+  --- ```
+  ---@param pattern_index integer
+  function TSQuery:disable_pattern(pattern_index)
+    C.ts_query_disable_pattern(self, pattern_index - 1)
+  end
 end
 
 do --- lang and wasm
