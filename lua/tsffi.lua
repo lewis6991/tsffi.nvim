@@ -1,9 +1,9 @@
-local ffi = require('ffi')
+local ffi = require('ffi') --[[@as ffilib.tree-sitter]]
 local C = ffi.C --- @type ffilib.tree-sitter.C
 
 local MAXLNUM = 2 ^ 31 - 1
 
-local has_nvim_ts_parser_parse_buf = false
+local has_nts_parser_parse_buf = false
 
 local TS_LANGUAGE_VERSION = vim._ts_get_language_version()
 local TS_MIN_COMPATIBLE_LANG_VERSION = vim._ts_get_minimum_language_version()
@@ -27,17 +27,18 @@ end
 local function make_ranges(ranges, length, include_bytes)
   local r = {} --- @type Range4[]|Range6[]
   for i = 0, length - 1 do
-    --- @type integer[]
-    local s = {
-      ranges[i].start_point.row,
-      ranges[i].start_point.column,
-      include_bytes and ranges[i].start_byte or nil,
-    }
-    vim.list_extend(s, {
-      ranges[i].end_point.row,
-      ranges[i].end_point.column,
-      include_bytes and ranges[i].end_byte or nil,
-    })
+    local range = ranges[i]
+    local s = {} --- @type integer[]
+    s[#s + 1] = range.start_point.row
+    s[#s + 1] = range.start_point.column
+    if include_bytes then
+      s[#s + 1] = ranges[i].start_byte
+    end
+    s[#s + 1] = range.end_point.row
+    s[#s + 1] = range.end_point.column
+    if include_bytes then
+      s[#s + 1] = range.end_byte
+    end
     r[#r + 1] = s
   end
   return r
@@ -47,17 +48,16 @@ end
 --- @field _node TSNode.cdata
 local TSNode = {}
 
+--- @param node TSNode.cdata
+--- @return TSNode.ffi?
+local function nodewrap(node)
+  if not C.ts_node_is_null(node) then
+    return ffi.new('TSNodeWrap', node)
+  end
+end
+
 do --- TSNode
   TSNode.__index = TSNode
-
-  --- @param node TSNode.cdata
-  --- @return TSNode.ffi?
-  function TSNode.new(node)
-    if C.ts_node_is_null(node) then
-      return
-    end
-    return setmetatable({ _node = node }, TSNode)
-  end
 
   --- @return string
   function TSNode:__tostring()
@@ -79,39 +79,38 @@ do --- TSNode
   --- @param descendant TSNode.ffi
   --- @return TSNode.ffi?
   function TSNode:child_with_descendant(descendant)
-    return TSNode.new(C.ts_node_child_with_descendant(self._node, descendant._node))
+    return nodewrap(C.ts_node_child_with_descendant(self._node, descendant._node))
   end
 
   --- @return TSNode.ffi?
   function TSNode:next_sibling()
-    return TSNode.new(C.ts_node_next_sibling(self._node))
+    return nodewrap(C.ts_node_next_sibling(self._node))
   end
 
   --- @return TSNode.ffi?
   function TSNode:prev_sibling()
-    return TSNode.new(C.ts_node_prev_sibling(self._node))
+    return nodewrap(C.ts_node_prev_sibling(self._node))
   end
 
   --- @return TSNode.ffi?
   function TSNode:next_named_sibling()
-    return TSNode.new(C.ts_node_next_named_sibling(self._node))
+    return nodewrap(C.ts_node_next_named_sibling(self._node))
   end
 
   --- @return TSNode.ffi?
   function TSNode:prev_named_sibling()
-    local node = C.ts_node_prev_named_sibling(self._node)
-    return TSNode.new(node)
+    return nodewrap(C.ts_node_prev_named_sibling(self._node))
   end
 
   --- @return TSNode.ffi?
   function TSNode:parent()
-    return TSNode.new(C.ts_node_parent(self._node))
+    return nodewrap(C.ts_node_parent(self._node))
   end
 
   --- @param node TSNode.ffi
   --- @return boolean
   function TSNode:equal(node)
-    return C.ts_node_eq(self._node, node._node)
+    return node and C.ts_node_eq(self._node, node._node)
   end
 
   --- @return integer
@@ -165,13 +164,13 @@ do --- TSNode
   --- @param index integer
   --- @return TSNode.ffi?
   function TSNode:child(index)
-    return TSNode.new(C.ts_node_child(self._node, index))
+    return nodewrap(C.ts_node_child(self._node, index))
   end
 
   --- @param index integer
   --- @return TSNode.ffi?
   function TSNode:named_child(index)
-    return TSNode.new(C.ts_node_named_child(self._node, index))
+    return nodewrap(C.ts_node_named_child(self._node, index))
   end
 
   --- Get a unique identifier for the node inside its own tree.
@@ -258,7 +257,7 @@ do --- TSNode
   function TSNode:descendant_for_range(start_row, start_col, end_row, end_col)
     local startp = ffi.new('TSPoint', start_row, start_col) --[[@as TSPoint.cdata]]
     local endp = ffi.new('TSPoint', end_row, end_col) --[[@as TSPoint.cdata]]
-    return TSNode.new(C.ts_node_descendant_for_point_range(self._node, startp, endp))
+    return nodewrap(C.ts_node_descendant_for_point_range(self._node, startp, endp))
   end
 
   --- Get the smallest named node within this node that spans the given range of
@@ -271,7 +270,7 @@ do --- TSNode
   function TSNode:named_descendant_for_range(start_row, start_col, end_row, end_col)
     local startp = ffi.new('TSPoint', start_row, start_col) --[[@as TSPoint.cdata]]
     local endp = ffi.new('TSPoint', end_row, end_col) --[[@as TSPoint.cdata]]
-    return TSNode.new(C.ts_node_named_descendant_for_point_range(self._node, startp, endp))
+    return nodewrap(C.ts_node_named_descendant_for_point_range(self._node, startp, endp))
   end
 
   --- Iterates over all the direct children of {TSNode}, regardless of whether
@@ -313,7 +312,7 @@ do --- TSNode
           return true
         end
       end
-      node = TSNode.new(C.ts_node_child_with_descendant(node._node, self._node))
+      node = nodewrap(C.ts_node_child_with_descendant(node._node, self._node))
     end
     return false
   end
@@ -323,15 +322,14 @@ do --- TSNode
   function TSNode:named_children()
     local r = {} --- @type TSNode[]
     for i = 0, self:named_child_count() - 1 do
-      local child = C.ts_node_named_child(self, i)
-      r[#r + 1] = child
+      r[#r + 1] = nodewrap(C.ts_node_named_child(self, i))
     end
     return r
   end
 
   --- @return TSNode.ffi?
   function TSNode:root()
-    return TSNode.new(C.ts_tree_root_node(self._node.tree))
+    return nodewrap(C.ts_tree_root_node(self._node.tree))
   end
 
   --- Get the |TSTree| of the node.
@@ -353,9 +351,11 @@ end
 local TSTree = {}
 
 do --- TSTree
+  TSTree.__index = TSTree
+
   --- @return TSNode.ffi
   function TSTree:root()
-    return assert(TSNode.new(C.ts_tree_root_node(self)))
+    return assert(nodewrap(C.ts_tree_root_node(self)))
   end
 
   --- @param start_byte integer
@@ -405,16 +405,13 @@ do --- TSTree
   --- @return Range4[]|Range6[]
   function TSTree:included_ranges(include_bytes)
     local len = ffi.new('uint32_t[1]')
-    local ranges = C.ts_tree_included_ranges(self, len)
-    ffi.gc(ranges, C.free)
+    local ranges = ffi.gc(C.ts_tree_included_ranges(self, len), C.free)
     return make_ranges(ranges, len[0], include_bytes)
   end
 
   --- @return TSTree
   function TSTree:copy()
-    local copy = C.ts_tree_copy(self)
-    ffi.gc(copy, C.ts_tree_delete)
-    return copy
+    return ffi.gc(C.ts_tree_copy(self), C.ts_tree_delete)
   end
 end
 
@@ -422,6 +419,12 @@ end
 local TSParser = {}
 
 do --- TSParser
+  TSParser.__index = TSParser
+
+  function TSParser:__tostring()
+    return '<parser>'
+  end
+
   -- static void logger_cb(void *payload, TSLogType logtype, const char *s)
   -- {
   --   TSLuaLoggerOpts *opts = (TSLuaLoggerOpts *)payload;
@@ -490,9 +493,9 @@ do --- TSParser
     if type(source) == 'string' then
       new_tree = C.ts_parser_parse_string(self, tree, source, #source)
     elseif type(source) == 'number' then
-      assert(vim.api.nvim_buf_is_valid(source), 'Invalid buffer handle')
-      if has_nvim_ts_parser_parse_buf then
-        new_tree = C.nvim_ts_parser_parse_buf(self, tree, source, timeout_ns or 0)
+      assert(vim.api.vim_buf_is_valid(source), 'Invalid buffer handle')
+      if has_nts_parser_parse_buf then
+        new_tree = C.nts_parser_parse_buf(self, tree, source, timeout_ns or 0)
         if new_tree == nil then
           -- Make it actually nil
           new_tree = nil
@@ -523,10 +526,6 @@ do --- TSParser
     ffi.gc(changed, C.free)
 
     return new_tree, make_ranges(changed, n_ranges[0], include_bytes)
-  end
-
-  function TSParser:reset()
-    C.ts_parser_reset(self)
   end
 
   local function range_err()
@@ -562,19 +561,19 @@ do --- TSParser
   --- @param ranges (Range6|TSNode.ffi)[])
   function TSParser:set_included_ranges(ranges)
     vim.validate('ranges', ranges, 'table')
-    local tbl_len = #ranges
-    if tbl_len == 0 then
+    local len = #ranges
+    if len == 0 then
       return
     end
 
     --- @type TSRange.cdata[]
-    local tsranges = ffi.new('TSRange[?]', tbl_len)
+    local tsranges = ffi.new('TSRange[?]', len)
 
-    for index = 1, tbl_len do
+    for index = 1, len do
       range_from_lua(ranges[index], tsranges[index - 1])
     end
 
-    C.ts_parser_set_included_ranges(self, tsranges, tbl_len)
+    C.ts_parser_set_included_ranges(self, tsranges, len)
   end
 
   --- @param include_bytes? boolean
@@ -603,7 +602,6 @@ end
 
 --- @class TSQueryMatch.ffi: TSQueryMatch
 --- @field _match TSQueryMatch.cdata
---- @field _captures table<integer, TSQueryCapture.ffi>
 local TSQueryMatch = {}
 
 do --- TSQueryMatch
@@ -612,18 +610,8 @@ do --- TSQueryMatch
   --- @param match TSQueryMatch.cdata
   --- @return TSQueryMatch.ffi
   function TSQueryMatch.new(match)
-    local captures = {} --- @type table<integer, TSQueryCapture.ffi>
-    for i = 0, match.capture_count - 1 do
-      local capture = match.captures[i]
-      captures[i + 1] = {
-        index = capture.index,
-        node = assert(TSNode.new(capture.node)),
-      }
-    end
-    return setmetatable({
-      _captures = captures,
-      _match = match,
-    }, TSQueryMatch)
+    --- @diagnostic disable-next-line: missing-return-value
+    return ffi.new('TSQueryMatchWrap', match)
   end
 
   --- @return integer match_id
@@ -635,10 +623,11 @@ do --- TSQueryMatch
   --- @return table<integer,TSNode[]>
   function TSQueryMatch:captures()
     local r = {} --- @type table<integer,TSNode.ffi[]>
-    for _, capture in ipairs(self._captures) do
+    for i = 0, self._match.capture_count - 1 do
+      local capture = self._match.captures[i]
       local index = capture.index + 1
       r[index] = r[index] or {}
-      r[index][#r[index] + 1] = capture.node
+      r[index][#r[index] + 1] = nodewrap(capture.node)
     end
     return r
   end
@@ -648,9 +637,10 @@ end
 local TSQueryCursor = {}
 
 do --- TSQueryCursor
-  --- @param match_id integer
-  function TSQueryCursor:remove_match(match_id)
-    C.ts_query_cursor_remove_match(self, match_id)
+  TSQueryCursor.__index = TSQueryCursor
+
+  function TSQueryCursor:__tostring()
+    return '<treecursor>'
   end
 
   --- @return integer? capture
@@ -658,12 +648,11 @@ do --- TSQueryCursor
   --- @return TSQueryMatch.ffi? match
   function TSQueryCursor:next_capture()
     local match = ffi.new('TSQueryMatch') --[[@as TSQueryMatch.cdata]]
-
     local capture_index = ffi.new('uint32_t[1]')
     if C.ts_query_cursor_next_capture(self, match, capture_index) then
       local capture = match.captures[capture_index[0]]
-      local node = TSNode.new(capture.node)
-      return capture.index + 1, node, TSQueryMatch.new(match)
+      local node = nodewrap(capture.node)
+      return capture.index + 1, node, ffi.new('TSQueryMatchWrap', match)
     end
   end
 
@@ -671,7 +660,7 @@ do --- TSQueryCursor
   function TSQueryCursor:next_match()
     local match = ffi.new('TSQueryMatch') --[[@as TSQueryMatch.ffi]]
     if C.ts_query_cursor_next_match(self, match) then
-      return TSQueryMatch.new(match)
+      return ffi.new('TSQueryMatchWrap', match)
     end
   end
 end
@@ -680,6 +669,12 @@ end
 local TSQuery = {}
 
 do --- TSQuery
+  TSQuery.__index = TSQuery
+
+  function TSQuery:__tostring()
+    return '<query>'
+  end
+
   --- Get information about the query's patterns and captures.
   --- @return TSQueryInfo
   function TSQuery:inspect()
@@ -1125,8 +1120,7 @@ do --- tsffi
   --- @param lang string
   --- @return TSParser.ffi
   function tsffi._create_ts_parser(lang)
-    local parser = C.ts_parser_new()
-    ffi.gc(parser, C.ts_parser_delete)
+    local parser = ffi.gc(C.ts_parser_new(), C.ts_parser_delete)
     C.ts_parser_set_language(parser, lang_check(lang))
     return parser
   end
@@ -1163,8 +1157,7 @@ do --- tsffi
     node_check(node)
     query_check(query)
 
-    local cursor = C.ts_query_cursor_new()
-    ffi.gc(cursor, C.ts_query_cursor_delete)
+    local cursor = ffi.gc(C.ts_query_cursor_new(), C.ts_query_cursor_delete)
 
     C.ts_query_cursor_exec(cursor, query, node._node)
 
@@ -1275,50 +1268,39 @@ function M.setup()
   ffi.cdef([[
     void *free(void *);
 
-    TSTree *nvim_ts_parser_parse_buf(TSParser *p, TSTree *old_tree, int bufnr, uint64_t timeout_ns);
+    TSTree *nts_parser_parse_buf(TSParser *p, TSTree *old_tree, int bufnr, uint64_t timeout_ns);
   ]])
 
-  has_nvim_ts_parser_parse_buf = pcall(function()
-    return C.nvim_ts_parser_parse_buf
+  has_nts_parser_parse_buf = pcall(function()
+    return C.nts_parser_parse_buf
   end)
 
-  -- Can't metatype due to field-method conflicts:
+  ffi.metatype('TSParser', TSParser)
+  TSParser.reset = C.ts_parser_reset
+
+  ffi.metatype('TSQuery', TSQuery)
+
+  ffi.metatype('TSTree', TSTree)
+
+  ffi.metatype('TSQueryCursor', TSQueryCursor)
+  TSQueryCursor.remove_match = C.ts_query_cursor_remove_match
+
+  -- Need to wrap TSNode and TSQueryMatch to prevent field clashes.
   -- - TSNode.id
   -- - TSNode.tree
   -- - TSQueryMatch.captures
-  --
-  -- For now wrap all cdata objects in a table
+  ffi.cdef([[
+    typedef struct TSQueryMatchWrap {
+      TSQueryMatch _match;
+    } TSQueryMatchWrap;
 
-  ffi.metatype('TSParser', {
-    __index = TSParser,
-    __tostring = function()
-      return '<parser>'
-    end,
-  })
+    typedef struct TSNodeWrap {
+      TSNode _node;
+    } TSNodeWrap;
+  ]])
 
-  ffi.metatype('TSQuery', {
-    __index = TSQuery,
-    __tostring = function()
-      return '<query>'
-    end,
-  })
-
-  ffi.metatype('TSTree', {
-    __index = TSTree,
-    -- __tostring = function()
-    --   return '<tree>'
-    -- end,
-  })
-
-  ffi.metatype('TSQueryCursor', {
-    __index = TSQueryCursor,
-    __tostring = function()
-      return '<treecursor>'
-    end,
-  })
-
-  -- ffi.metatype('TSNode', { __index = TSNode })
-  -- ffi.metatype('TSQueryMatch', { __index = TSQueryMatch })
+  ffi.metatype('TSNodeWrap', TSNode)
+  ffi.metatype('TSQueryMatchWrap', TSQueryMatch)
 
   function _G.type(obj)
     local r = otype(obj)

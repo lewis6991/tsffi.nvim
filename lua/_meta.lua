@@ -1,5 +1,14 @@
 --- @meta
 
+--- @class ffilib.tree-sitter : ffilib
+local ffi = {}
+
+--- @generic T: ffi.cdata*
+--- @param cdata T
+--- @param finalizer function
+--- @return T
+function ffi.gc(cdata, finalizer) end
+
 --- @class ffilib.tree-sitter.C
 local C = {}
 
@@ -14,7 +23,7 @@ function C.malloc(size) end
 --- @param bufnr integer
 --- @param timeout_ns integer
 --- @return TSTree.cdata?
-function C.nvim_ts_parser_parse_buf(parser, old_tree, bufnr, timeout_ns) end
+function C.nts_parser_parse_buf(parser, old_tree, bufnr, timeout_ns) end
 
 do --- Section - Types
   ---@class TSStateId: integer
